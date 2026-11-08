@@ -22,7 +22,11 @@ bun run build
 
 ## Deploy
 
+Agents merge and deploy each finished task with the [`merge-and-deploy`](.agents/skills/merge-and-deploy/SKILL.md) skill. To deploy by hand:
+
 ```bash
-./scripts/deploy.sh                  # app
-node scripts/deploy-extension.mjs    # preset extension
+./scripts/deploy-main.sh               # latest main
+./scripts/deploy-main.sh --extension   # latest main and the preset extension
+./scripts/deploy.sh                    # this checkout, app only
+node scripts/deploy-extension.mjs      # this checkout, preset extension only
 ```

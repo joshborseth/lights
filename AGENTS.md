@@ -8,6 +8,12 @@ Foldkit owns `FOLDKIT.md` and replaces it whole on upgrade. This file is yours. 
 
 subtree_prompted: false
 
+## Finishing a task
+
+When a task changes files in this repo, finish it by following the [`merge-and-deploy`](./.agents/skills/merge-and-deploy/SKILL.md) skill. It opens the PR, merges it, and deploys. Do this without being asked, unless Josh said not to push, open a PR, merge, or deploy.
+
+Add new skills under `.agents/skills/<name>/`, and link each one from `.claude/skills/<name>` so every agent finds it.
+
 ## Project Notes
 
 Read [`docs/migration-plan.md`](./docs/migration-plan.md) for the architecture and milestones. Its "Rules for commands to the bulbs" section is binding for any code that sends light commands.

@@ -22,7 +22,6 @@ import {
   type GroupNode,
   type Light,
   MAX_BRIGHTNESS,
-  PRESET_GROUPS,
   type Preset,
   PresetLook,
   SavablePresetLook,
@@ -575,9 +574,7 @@ const groupControlsView = (
           : Option.none(),
         h,
       ),
-      PRESET_GROUPS.includes(name)
-        ? presetChipsView(model, target, status, h)
-        : h.empty,
+      presetChipsView(model, target, status, h),
     ],
   )
 }

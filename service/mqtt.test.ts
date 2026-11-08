@@ -89,3 +89,23 @@ describe('reading bulb state', () => {
     expect(fake.published).toEqual([])
   })
 })
+
+describe('spotting a Rainbow loop', () => {
+  const emit = (fake: FakeClient, topic: string, payload: unknown) =>
+    fake.emit(
+      'message',
+      `zigbee2mqtt/${topic}`,
+      Buffer.from(JSON.stringify(payload)),
+    )
+  const frame = (hex: string) => ({ color: { hex } })
+
+  test('finds a loop on any group, and ignores commands to a bulb', async () => {
+    const { fake, lights } = await setup()
+    emit(fake, 'bridge/groups', [{ friendly_name: 'Bedroom', members: [] }])
+    emit(fake, 'Bedroom/set', frame('#FF0000'))
+    emit(fake, 'Bedroom/set', frame('#FFAA00'))
+    emit(fake, 'Orb/set', frame('#FF0000'))
+    emit(fake, 'Orb/set', frame('#FFAA00'))
+    expect(lights.activeRainbowGroups()).toEqual(['Bedroom'])
+  })
+})

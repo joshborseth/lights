@@ -129,9 +129,19 @@ describe('applying', () => {
     expect(mqtt.publish.mock.calls[0][0]).toBe('All Lights/set')
   })
 
-  test('refuses Bedroom', async () => {
-    const { extension, mqtt, logger } = make()
+  test('accepts a room group', async () => {
+    const { extension, mqtt } = make()
     await send(extension, 'preset/set', { name: 'Full red', group: 'Bedroom' })
+    expect(mqtt.publish.mock.calls[0][0]).toBe('Bedroom/set')
+  })
+
+  test.each([
+    ['an unknown group', { group: 'bridge/request/permit_join' }],
+    ['a bulb named as a group', { group: 'Orb' }],
+    ['a non-string group', { group: 7 }],
+  ])('refuses %s', async (_label, target) => {
+    const { extension, mqtt, logger } = make()
+    await send(extension, 'preset/set', { name: 'Full red', ...target })
     expect(mqtt.publish).not.toHaveBeenCalled()
     expect(logger.error).toHaveBeenCalled()
   })
@@ -280,6 +290,14 @@ describe('rainbow loops', () => {
       light: 'Bedroom UFO',
     })
     expect(isLooping(extension, 'Orb')).toBe(true)
+    extension.stop()
+  })
+
+  test('a room group can run its own loop', async () => {
+    const { extension, mqtt } = make()
+    await start(extension, { group: 'Bedroom' })
+    expect(mqtt.publish.mock.calls[0][0]).toBe('Bedroom/set')
+    expect(isLooping(extension, 'Bedroom')).toBe(true)
     extension.stop()
   })
 

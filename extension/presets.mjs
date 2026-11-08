@@ -2,13 +2,14 @@
 // to the group that was asked, so bulbs that cannot store a Zigbee scene still
 // follow. Rainbow cannot be stored as a Zigbee scene, so the coordinator cycles
 // hue on that group until another preset or a manual command takes over.
-// Bedroom is intentionally absent from the groups: recalling a scene on Rest of
-// the House must not address the bedroom lights. A preset can still go to any
-// single bulb, named with `light` instead of `group`.
+// A preset can go to any Zigbee2MQTT group, or to any single bulb, named with
+// `light` instead of `group`. Bedroom is intentionally absent from the scene
+// recall groups: recalling a scene on Rest of the House must not address the
+// bedroom lights.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 
 const PRESETS_FILE = process.env.LIGHTS_PRESETS_FILE ?? '/app/data/presets.json'
-const PRESET_GROUPS = ['All Lights', 'Rest of the House']
+const SCENE_RECALL_GROUPS = ['All Lights', 'Rest of the House']
 const NAMED_PRESET_GROUP = 'All Lights'
 const MAX_NAME_LENGTH = 40
 const MIN_BRIGHTNESS = 1
@@ -104,7 +105,7 @@ export default class LightPresets {
     if (!target) {
       return
     }
-    if (PRESET_GROUPS.includes(target) && body.scene_recall != null) {
+    if (SCENE_RECALL_GROUPS.includes(target) && body.scene_recall != null) {
       const { bySceneId } = this.loadPresets()
       const name = bySceneId[String(body.scene_recall)]
       if (name) {
@@ -122,7 +123,7 @@ export default class LightPresets {
   presetTarget(body) {
     if (body.light === undefined) {
       const group = body.group ?? NAMED_PRESET_GROUP
-      return PRESET_GROUPS.includes(group) ? group : null
+      return this.isGroup(group) ? group : null
     }
     return body.group === undefined && this.isLight(body.light)
       ? body.light
@@ -142,8 +143,16 @@ export default class LightPresets {
     )
   }
 
+  isGroup(name) {
+    if (typeof name !== 'string') {
+      return false
+    }
+    const entity = this.zigbee.resolveEntity(name)
+    return entity?.isGroup() === true && entity.name === name
+  }
+
   isPresetTarget(name) {
-    return PRESET_GROUPS.includes(name) || this.isLight(name)
+    return this.isGroup(name) || this.isLight(name)
   }
 
   memberNames(name) {
@@ -304,7 +313,7 @@ export default class LightPresets {
         return
       }
       if (!this.isPresetTarget(target)) {
-        this.logger.error(`Stopping rainbow loop on missing light ${target}`)
+        this.logger.error(`Stopping rainbow loop on missing target ${target}`)
         this.stopLoop(target)
         return
       }

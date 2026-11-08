@@ -202,12 +202,22 @@ describe('view', () => {
     )
   })
 
-  test('offers presets on All Lights but never on Bedroom', () => {
+  test('offers presets on every group', () => {
     scene(
       { update, view },
       given(loaded),
       expect(role('button', { name: 'Red on All Lights' })).toExist(),
-      expect(role('button', { name: 'Red on Bedroom' })).not.toExist(),
+      click(role('button', { name: 'Red on Bedroom' })),
+      Command.expectHas(
+        SendFrame({
+          frame: JSON.stringify({
+            topic: 'preset/set',
+            payload: { name: 'Red', group: 'Bedroom' },
+          }),
+        }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
     )
   })
 
@@ -427,12 +437,12 @@ describe('view', () => {
       )
     })
 
-    test('rooms get no group presets', () => {
+    test('nested rooms get group presets', () => {
       scene(
         { update, view },
         given(nested),
         expect(role('button', { name: 'Red on Rest of the House' })).toExist(),
-        expect(role('button', { name: 'Red on Living Room' })).not.toExist(),
+        expect(role('button', { name: 'Red on Living Room' })).toExist(),
       )
     })
   })

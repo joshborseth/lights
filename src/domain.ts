@@ -15,11 +15,6 @@ export const MIN_BRIGHTNESS = 1
 export const MAX_BRIGHTNESS = 254
 export const DEFAULT_COLOR_TEMP = 370
 
-export const PRESET_GROUPS: ReadonlyArray<string> = [
-  'All Lights',
-  'Rest of the House',
-]
-
 // LIGHTS
 
 export const ColorTempRange = Schema.Struct({

@@ -2,10 +2,6 @@ import { Array, Effect, Option, pipe } from 'effect'
 
 import { type FlashConfig, hexToHueSaturation } from '../src/automation'
 
-export const PRESET_GROUPS: ReadonlyArray<string> = [
-  'All Lights',
-  'Rest of the House',
-]
 export const RAINBOW_PRESET = 'Rainbow'
 
 const STOP_LOOP_REPEAT_MS = 400

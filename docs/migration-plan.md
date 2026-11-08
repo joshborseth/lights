@@ -75,8 +75,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Off is exactly `{"state":"OFF"}`.** Any `transition` key, even 0, makes Zigbee2MQTT send a level-0 move instead, and several bulbs stay on at minimum brightness.
 - **Never send `transition` for color.** IKEA bulbs freeze and drop new colors until a fade finishes.
 - **Throttle sliders to one command per 400 ms, and always send the final value.** Faster updates get dropped.
-- **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for All Lights or Rest of the House, or `{"name": ..., "light": ...}` for one bulb. The extension refuses other groups, and any `light` that Zigbee2MQTT does not report as a light.
-- **The Bedroom group has no presets, on purpose.** Do not offer them there. Each bedroom bulb can still take a preset on its own.
+- **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for any group, or `{"name": ..., "light": ...}` for one bulb. The extension refuses any `group` that Zigbee2MQTT does not report as a group, and any `light` that it does not report as a light.
 - **Offer a bulb only the presets it can show.** A Color or Rainbow preset needs color support, and a White preset needs color temperature.
 - **Any other command to a target stops every Rainbow loop that shares a bulb with it.** That is the intended way to end it. A command to one bulb stops a Rainbow on a group that contains it, and a command to a group stops loops on its bulbs and on groups that overlap it. Groups that share no bulb are left alone.
 - **A preset ends any Rainbow loop that overlaps its target.** Without this, the loop repaints the target on its next frame. A preset on one bulb stops a Rainbow on a group that contains it, and the other bulbs hold their last color.

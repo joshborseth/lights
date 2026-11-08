@@ -5,7 +5,6 @@ import { type LightsPort } from './engine'
 import {
   type JsonObject,
   type LightStates,
-  PRESET_GROUPS,
   isJsonObject,
 } from './flash'
 
@@ -157,7 +156,7 @@ export const connectLights = (
         handleDevices(payload)
       } else if (relative.endsWith('/set')) {
         const group = relative.slice(0, -'/set'.length)
-        if (PRESET_GROUPS.includes(group)) {
+        if (groupAddresses.has(group)) {
           handleGroupCommand(group, payload)
         }
       } else if (!relative.includes('/')) {
@@ -230,7 +229,7 @@ export const connectLights = (
       groupMembers,
       activeRainbowGroups: () => {
         const now = Date.now()
-        return Array.filter(PRESET_GROUPS, group => {
+        return Array.filter(Array.fromIterable(groupAddresses.keys()), group => {
           const recent = Array.filter(
             rainbowFrames.get(group) ?? [],
             frame => now - frame.at < RAINBOW_WINDOW_MS,

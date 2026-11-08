@@ -16,6 +16,7 @@ import { Tabs } from '@foldkit/ui'
 
 import { DEFAULT_CONFIG, type Snapshot, WatcherMode } from './automation'
 import * as Automations from './automations'
+import { Pairing } from './domain'
 import {
   Connection,
   type Model,
@@ -24,6 +25,7 @@ import {
   Startup,
   update,
 } from './main'
+import * as Manage from './manage'
 import { view } from './view'
 
 const snapshot: Snapshot = {
@@ -75,9 +77,12 @@ const base: Model = {
   tab: 'Lights',
   tabs: Tabs.init({ id: 'app-tabs' }),
   automations: Automations.init,
+  manage: Manage.init,
   connection: Connection.Connected(),
   startup: Startup.Ready(),
   isBridgeOnline: true,
+  newDevices: [],
+  pairing: Pairing.Closed(),
   lights: [],
   groups: [
     { name: 'All Lights', memberAddresses: [] },

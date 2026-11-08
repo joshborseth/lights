@@ -55,6 +55,7 @@ describe('decodeFrame', () => {
               supportsColor: true,
             },
           ],
+          newDevices: [],
         }),
       ),
     )

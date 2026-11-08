@@ -2,7 +2,7 @@
 
 A [Foldkit](https://foldkit.dev) app for controlling Zigbee lights through Zigbee2MQTT.
 
-Controls bulbs, groups, and presets over Zigbee2MQTT's WebSocket API, and runs automations such as the PR merge flash through a small service in `service/`. See the [migration plan](docs/migration-plan.md).
+Controls bulbs, groups, and presets over Zigbee2MQTT's WebSocket API, pairs new bulbs and manages groups from the Manage tab, and runs automations such as the PR merge flash through a small service in `service/`. See the [migration plan](docs/migration-plan.md).
 
 ## Develop
 

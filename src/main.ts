@@ -37,6 +37,8 @@ import {
   LightState,
   MAX_BRIGHTNESS,
   MIN_BRIGHTNESS,
+  NewDevice,
+  Pairing,
   Power,
   Preset,
   PresetLook,
@@ -52,6 +54,7 @@ import {
   savePresetFrame,
   settingFrame,
 } from './domain'
+import * as Manage from './manage'
 
 const CONNECTION_TIMEOUT_MS = 5000
 const MAX_RECONNECT_DELAY_MS = 30_000
@@ -62,6 +65,7 @@ const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
 const AUTOMATIONS_REFRESH_MS = 5000
 const SUSPECT_SOCKET_AFTER_HIDDEN_MS = 5000
+const PAIRING_CLOCK_MS = 1000
 const SLIDER_STEP = 1
 const DRAFT_SETTLE_TIMEOUT_MS = 1500
 const POWER_CONFIRM_TIMEOUT_MS = 5000
@@ -166,7 +170,7 @@ export const PresetEditor = defineTaggedUnion({
 })
 export type PresetEditor = typeof PresetEditor.Type
 
-export const AppTab = Schema.Literals(['Lights', 'Automations'])
+export const AppTab = Schema.Literals(['Lights', 'Manage', 'Automations'])
 export type AppTab = typeof AppTab.Type
 
 export const AppTabs = Tabs.create<AppTab>()
@@ -175,10 +179,13 @@ export const Model = Schema.Struct({
   tab: AppTab,
   tabs: Tabs.Model,
   automations: Automations.Model,
+  manage: Manage.Model,
   connection: Connection,
   startup: Startup,
   isBridgeOnline: Schema.Boolean,
   lights: Schema.Array(Light),
+  newDevices: Schema.Array(NewDevice),
+  pairing: Pairing,
   groups: Schema.Array(Group),
   states: Schema.Record(Schema.String, LightState),
   groupLevels: Schema.Record(Schema.String, Schema.Number),
@@ -200,6 +207,7 @@ export type Model = typeof Model.Type
 export const Message = defineMessageUnion({
   GotTabsMessage: { message: Tabs.Message },
   GotAutomationsMessage: { message: Automations.Message },
+  GotManageMessage: { message: Manage.Message },
   AcquiredSocket: {},
   ReleasedSocket: {},
   FailedAcquireSocket: { error: Schema.String },
@@ -478,15 +486,18 @@ const nextAttempt = (connection: Connection): number =>
 
 const startReconnectWait = (model: Model): UpdateReturn => {
   const attempt = nextAttempt(model.connection)
-  return {
-    model: modifyFields(model, {
-      connection: () => Connection.WaitingToReconnect({ attempt }),
-      drafts: () => [],
-      activities: () => [],
-      presetEditor: editor => failedEditor(editor, CONNECTION_LOST_FAILURE),
+  return Update.combine(model, [
+    stepModel => ({
+      model: modifyFields(stepModel, {
+        connection: () => Connection.WaitingToReconnect({ attempt }),
+        drafts: () => [],
+        activities: () => [],
+        presetEditor: editor => failedEditor(editor, CONNECTION_LOST_FAILURE),
+      }),
+      commands: [WaitToReconnect({ delayMs: reconnectDelayMs(attempt) })],
     }),
-    commands: [WaitToReconnect({ delayMs: reconnectDelayMs(attempt) })],
-  }
+    foldManageLostConnection,
+  ])
 }
 
 // NOTE: A group has no brightness of its own once its bulbs differ, so it keeps
@@ -649,11 +660,19 @@ const withReceived = (model: Model, received: InitialFrame): Model =>
 
 const applyFrame = (model: Model, frame: IncomingFrame): Model =>
   IncomingFrame.match(frame, {
-    ReportedLights: ({ lights }) =>
+    ReportedLights: ({ lights, newDevices }) =>
       withReceived(
-        withSettledGroupLevels(modifyFields(model, { lights: () => lights })),
+        withSettledGroupLevels(
+          modifyFields(model, {
+            lights: () => lights,
+            newDevices: () => newDevices,
+          }),
+        ),
         'Lights',
       ),
+    ReportedPairing: ({ pairing }) =>
+      modifyFields(model, { pairing: () => pairing }),
+    ReportedBridgeResponse: () => model,
     ReportedGroups: ({ groups }) =>
       withReceived(
         withSettledGroupLevels(modifyFields(model, { groups: () => groups })),
@@ -854,6 +873,62 @@ const foldAutomations = Update.foldChild({
   toParentMessage: message => Message.GotAutomationsMessage({ message }),
 })
 
+const manageContext = (model: Model): Manage.Context => ({
+  lights: model.lights,
+  groups: model.groups,
+  newDevices: model.newDevices,
+})
+
+const foldAutomationsRename = Update.foldChild({
+  update: Automations.renamedGroup,
+  read: (model: Model) => Option.some(model.automations),
+  write: (model, nextAutomations) =>
+    modifyFields(model, { automations: () => nextAutomations }),
+  toParentMessage: message => Message.GotAutomationsMessage({ message }),
+})
+
+const foldManageOutMessage = Manage.OutMessage.match<
+  Update.Step<Model, Message, Z2mSocketService>,
+  Manage.OutMessage
+>({
+  ProducedFrames:
+    ({ frames }) =>
+    model => ({
+      model,
+      commands: Array.map(frames, frame => SendFrame({ frame })),
+    }),
+  RenamedGroup:
+    ({ from, to }) =>
+    model =>
+      foldAutomationsRename(model, { from, to }),
+})
+
+const manageFold = {
+  read: (parent: Model) => Option.some(parent.manage),
+  write: (parent: Model, nextManage: Manage.Model) =>
+    modifyFields(parent, { manage: () => nextManage }),
+  toParentMessage: (child: Manage.Message) =>
+    Message.GotManageMessage({ message: child }),
+  foldOutMessage: foldManageOutMessage,
+}
+
+const foldManage = (model: Model, message: Manage.Message): UpdateReturn =>
+  Update.foldChild({
+    ...manageFold,
+    update: (manage: Manage.Model, input: Manage.Message) =>
+      Manage.update(manage, input, manageContext(model)),
+  })(model, message)
+
+const foldManageResponse = Update.foldChild({
+  ...manageFold,
+  update: Manage.receivedResponse,
+})
+
+const foldManageLostConnection = Update.foldChildStep({
+  ...manageFold,
+  update: Manage.lostConnection,
+})
+
 const withEditedGroupLevel = (
   levels: Model['groupLevels'],
   target: Target,
@@ -998,6 +1073,8 @@ export const update = (model: Model, message: Message) =>
 
     GotAutomationsMessage: ({ message }) => foldAutomations(model, message),
 
+    GotManageMessage: ({ message }) => foldManage(model, message),
+
     AcquiredSocket: () => ({
       model: modifyFields(model, {
         connection: () => Connection.Connected(),
@@ -1045,9 +1122,15 @@ export const update = (model: Model, message: Message) =>
         }),
       }),
 
-    ReceivedFrame: ({ frame }) => ({
-      model: withStartupSettled(applyFrame(model, frame)),
-    }),
+    ReceivedFrame: ({ frame }) => {
+      const settled = withStartupSettled(applyFrame(model, frame))
+      return frame._tag === 'ReportedBridgeResponse'
+        ? foldManageResponse(settled, {
+            transaction: frame.transaction,
+            maybeError: frame.maybeError,
+          })
+        : { model: settled }
+    },
 
     CompletedWaitForStartupFrames: () => ({
       model: modifyFields(model, { startup: () => Startup.Ready() }),
@@ -1286,13 +1369,14 @@ export const update = (model: Model, message: Message) =>
 
     SucceededSendFrame: () => ({ model }),
 
-    FailedSendFrame: ({ error }) => ({
-      model: modifyFields(model, {
+    FailedSendFrame: ({ error }) => {
+      const withFailure: Model = modifyFields(model, {
         maybeProblem: () => Option.some(`Couldn't send that: ${error}`),
         activities: () => [],
         presetEditor: editor => failedEditor(editor, CONNECTION_LOST_FAILURE),
-      }),
-    }),
+      })
+      return foldManageLostConnection(withFailure)
+    },
   })
 
 // INIT
@@ -1302,10 +1386,13 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     tab: 'Lights',
     tabs: Tabs.init({ id: 'app-tabs' }),
     automations: Automations.init,
+    manage: Manage.init,
     connection: Connection.Connecting({ attempt: 0 }),
     startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
     isBridgeOnline: true,
     lights: [],
+    newDevices: [],
+    pairing: Pairing.Closed(),
     groups: [],
     states: {},
     groupLevels: {},
@@ -1320,6 +1407,9 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     presetEditor: PresetEditor.Closed(),
     maybeProblem: Option.none(),
   },
+  commands: Command.mapMessages([Manage.PickClientTag()], message =>
+    Message.GotManageMessage({ message }),
+  ),
 })
 
 // COMMAND
@@ -1553,6 +1643,21 @@ const socketSubscriptions = Subscription.make<
       }),
       dependenciesToStream: ({ isMoving }) =>
         isMoving ? streamPageScrollSettle : streamPageScrollStart,
+    },
+  ),
+  pairingClock: entry(
+    { isOpen: Schema.Boolean },
+    {
+      modelToDependencies: model => ({
+        isOpen: model.pairing._tag === 'Open',
+      }),
+      dependenciesToStream: ({ isOpen }) =>
+        Stream.when(
+          Manage.pairingClockTicks(PAIRING_CLOCK_MS).pipe(
+            Stream.map(message => Message.GotManageMessage({ message })),
+          ),
+          Effect.sync(() => isOpen),
+        ),
     },
   ),
   automationsRefresh: entry(

@@ -58,6 +58,8 @@ import {
   targetId,
   targetStatus,
 } from './main'
+import { type Message as ManageMessage } from './manage'
+import * as ManageView from './manageView'
 
 const WARM_WHITE = '#ffdfae'
 const MIN_GLOW_LEVEL = 0.3
@@ -110,7 +112,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   ),
 })
 
-const APP_TABS: ReadonlyArray<AppTab> = ['Lights', 'Automations']
+const APP_TABS: ReadonlyArray<AppTab> = ['Lights', 'Manage', 'Automations']
 
 const TAB_BUTTON =
   'flex-1 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground data-[selected]:bg-background data-[selected]:text-foreground'
@@ -147,6 +149,24 @@ const tabsView = (model: Model, h: HtmlBuilder<Message>): Html =>
 const panelView = (tab: AppTab, model: Model, h: HtmlBuilder<Message>): Html =>
   Match.value(tab).pipe(
     Match.when('Lights', () => bodyView(model, h)),
+    Match.when('Manage', () =>
+      h.submodel({
+        slotId: 'manage',
+        model: model.manage,
+        view: ManageView.view,
+        viewInputs: {
+          context: {
+            lights: model.lights,
+            groups: model.groups,
+            newDevices: model.newDevices,
+          },
+          pairing: model.pairing,
+          isLive: canControl(model),
+        },
+        toParentMessage: (message: ManageMessage) =>
+          Message.GotManageMessage({ message }),
+      }),
+    ),
     Match.when('Automations', () =>
       h.submodel({
         slotId: 'automations',

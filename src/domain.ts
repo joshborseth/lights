@@ -175,14 +175,11 @@ const toGroupNode = (
   }
 }
 
-// NOTE: Groups form a tree when each pair is either separate or one fully
-// inside the other. A group that cuts across that shape cannot have one place
-// in the tree, so it is listed on its own with all of its bulbs.
-export const buildLightTree = (
+const knownGroupsOf = (
   lights: ReadonlyArray<Light>,
   groups: ReadonlyArray<Group>,
-): LightTree => {
-  const knownGroups = pipe(
+): ReadonlyArray<Group> =>
+  pipe(
     groups,
     Array.map(group =>
       modifyFields(group, {
@@ -194,6 +191,15 @@ export const buildLightTree = (
     ),
     Array.filter(group => Array.isReadonlyArrayNonEmpty(group.memberAddresses)),
   )
+
+// NOTE: Groups form a tree when each pair is either separate or one fully
+// inside the other. A group that cuts across that shape cannot have one place
+// in the tree, so it is listed on its own with all of its bulbs.
+export const buildLightTree = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+): LightTree => {
+  const knownGroups = knownGroupsOf(lights, groups)
   const nestedGroups = withoutCrossingGroups(knownGroups)
   const addressesInTree = Array.flatMap(
     nestedGroups,
@@ -250,6 +256,262 @@ export const shortLightName = (
     : light.name
 }
 
+// PLACING LIGHTS
+
+export type GroupPlace = Readonly<{ name: string; depth: number }>
+
+export type MembershipChange = Readonly<{
+  add: ReadonlyArray<string>
+  remove: ReadonlyArray<string>
+}>
+
+const placesWithin = (
+  node: GroupNode,
+  depth: number,
+): ReadonlyArray<GroupPlace> => [
+  { name: node.group.name, depth },
+  ...Array.flatMap(node.childGroups, child => placesWithin(child, depth + 1)),
+]
+
+// NOTE: An empty group has no bulbs to place it by, so it is offered at the
+// top level. It takes its place in the tree once a bulb moves into it.
+export const groupPlaces = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+): ReadonlyArray<GroupPlace> => {
+  const tree = buildLightTree(lights, groups)
+  const knownGroups = knownGroupsOf(lights, groups)
+  return [
+    ...Array.flatMap(tree.roots, root => placesWithin(root, 0)),
+    ...pipe(
+      groups,
+      Array.filter(
+        group => !Array.some(knownGroups, known => known.name === group.name),
+      ),
+      Array.map(group => ({ name: group.name, depth: 0 })),
+    ),
+  ]
+}
+
+const isMember = (group: Group, address: string): boolean =>
+  Array.contains(group.memberAddresses, address)
+
+export const currentPlace = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+  address: string,
+): Option.Option<string> =>
+  pipe(
+    withoutCrossingGroups(knownGroupsOf(lights, groups)),
+    Array.filter(group => isMember(group, address)),
+    Array.sort(smallestFirst),
+    Array.head,
+    Option.map(group => group.name),
+  )
+
+const namesOf = (groups: ReadonlyArray<Group>): ReadonlyArray<string> =>
+  Array.map(groups, group => group.name)
+
+const containersOf = (
+  group: Group,
+  nestedGroups: ReadonlyArray<Group>,
+): ReadonlyArray<Group> =>
+  Array.filter(nestedGroups, candidate => isNestedIn(group, candidate))
+
+const nestedInside = (
+  group: Group,
+  nestedGroups: ReadonlyArray<Group>,
+): ReadonlyArray<Group> =>
+  Array.filter(nestedGroups, candidate => isNestedIn(candidate, group))
+
+const withoutExisting = (
+  groups: ReadonlyArray<Group>,
+  names: ReadonlyArray<string>,
+  address: string,
+): ReadonlyArray<string> =>
+  Array.filter(Array.dedupe(names), name =>
+    Array.some(
+      groups,
+      group => group.name === name && !isMember(group, address),
+    ),
+  )
+
+// NOTE: Bulbs still waiting for a name are left out, so that pairing two at
+// once doesn't stop All Lights from counting as the whole house.
+export const wholeHouseGroupNames = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+  address: string,
+): ReadonlyArray<string> => {
+  const otherNamedAddresses = pipe(
+    lights,
+    Array.filter(light => light.address !== address && !isUnnamed(light)),
+    Array.map(light => light.address),
+  )
+  return Array.isReadonlyArrayEmpty(otherNamedAddresses)
+    ? []
+    : namesOf(
+        Array.filter(groups, group =>
+          Array.every(otherNamedAddresses, other => isMember(group, other)),
+        ),
+      )
+}
+
+// NOTE: Groups nest only because of which bulbs they share, so a bulb placed in
+// a room also has to be in every group around that room, and leaving a room has
+// to take it out of the rest of the old branch. Otherwise the rooms stop
+// nesting and the tree on the Lights tab falls apart. An empty target has no
+// branch yet, so only the leaf room is left: the bulb stays in the broader
+// groups that say where it is in the house.
+export const moveLightChange = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+  address: string,
+  target: string,
+): MembershipChange => {
+  const knownGroups = knownGroupsOf(lights, groups)
+  const nestedGroups = withoutCrossingGroups(knownGroups)
+  const maybeKnownTarget = Array.findFirst(
+    knownGroups,
+    group => group.name === target,
+  )
+  const wanted = [
+    target,
+    ...Option.match(maybeKnownTarget, {
+      onNone: () => [],
+      onSome: group => namesOf(containersOf(group, nestedGroups)),
+    }),
+    ...wholeHouseGroupNames(lights, groups, address),
+  ]
+  const isLeaf = (group: Group) =>
+    Array.isReadonlyArrayEmpty(nestedInside(group, nestedGroups))
+  return {
+    add: withoutExisting(groups, wanted, address),
+    remove: namesOf(
+      Array.filter(
+        nestedGroups,
+        group =>
+          isMember(group, address) &&
+          !Array.contains(wanted, group.name) &&
+          (Option.isSome(maybeKnownTarget) || isLeaf(group)),
+      ),
+    ),
+  }
+}
+
+export const addToGroupChange = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+  address: string,
+  name: string,
+): MembershipChange => {
+  const knownGroups = knownGroupsOf(lights, groups)
+  const nestedGroups = withoutCrossingGroups(knownGroups)
+  return {
+    add: withoutExisting(
+      groups,
+      [
+        name,
+        ...Option.match(
+          Array.findFirst(nestedGroups, group => group.name === name),
+          {
+            onNone: () => [],
+            onSome: group => namesOf(containersOf(group, nestedGroups)),
+          },
+        ),
+      ],
+      address,
+    ),
+    remove: [],
+  }
+}
+
+export const removeFromGroupChange = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+  address: string,
+  name: string,
+): MembershipChange => {
+  const nestedGroups = withoutCrossingGroups(knownGroupsOf(lights, groups))
+  return {
+    add: [],
+    remove: [
+      name,
+      ...Option.match(
+        Array.findFirst(nestedGroups, group => group.name === name),
+        {
+          onNone: () => [],
+          onSome: group =>
+            namesOf(
+              Array.filter(nestedInside(group, nestedGroups), inner =>
+                isMember(inner, address),
+              ),
+            ),
+        },
+      ),
+    ],
+  }
+}
+
+// NAMES
+
+export const MAX_ENTITY_NAME_LENGTH = 60
+const RESERVED_ENTITY_NAMES = ['bridge', 'preset', 'coordinator']
+const FORBIDDEN_NAME_CHARACTERS = ['/', '#', '+']
+
+export const isUnnamed = (light: Light): boolean => light.name === light.address
+
+export const entityNameProblem = (
+  name: string,
+  takenNames: ReadonlyArray<string>,
+): Option.Option<string> => {
+  const trimmed = String.trim(name)
+  if (String.isEmpty(trimmed)) {
+    return Option.some('Give it a name.')
+  }
+  if (trimmed.length > MAX_ENTITY_NAME_LENGTH) {
+    return Option.some(
+      `Keep the name under ${MAX_ENTITY_NAME_LENGTH} characters.`,
+    )
+  }
+  if (
+    Array.some(FORBIDDEN_NAME_CHARACTERS, character =>
+      String.includes(character)(trimmed),
+    )
+  ) {
+    return Option.some("Names can't contain /, # or +.")
+  }
+  if (Array.contains(RESERVED_ENTITY_NAMES, String.toLowerCase(trimmed))) {
+    return Option.some('That name is reserved. Pick another one.')
+  }
+  return Array.contains(takenNames, trimmed)
+    ? Option.some('Another light or group already has that name.')
+    : Option.none()
+}
+
+// PAIRING
+
+export const NewDeviceSetup = Schema.Literals([
+  'Joining',
+  'ReadyLight',
+  'NotALight',
+  'Failed',
+])
+export type NewDeviceSetup = typeof NewDeviceSetup.Type
+
+export const NewDevice = Schema.Struct({
+  address: Schema.String,
+  setup: NewDeviceSetup,
+  maybeDescription: Schema.Option(Schema.String),
+})
+export type NewDevice = typeof NewDevice.Type
+
+export const Pairing = defineTaggedUnion({
+  Closed: {},
+  Open: { maybeEndsAt: Schema.Option(Schema.Number) },
+})
+export type Pairing = typeof Pairing.Type
+
 // PRESETS
 
 export const PresetLook = defineTaggedUnion({
@@ -269,7 +531,15 @@ export type Preset = typeof Preset.Type
 // INCOMING FRAMES
 
 export const IncomingFrame = defineTaggedUnion({
-  ReportedLights: { lights: Schema.Array(Light) },
+  ReportedLights: {
+    lights: Schema.Array(Light),
+    newDevices: Schema.Array(NewDevice),
+  },
+  ReportedPairing: { pairing: Pairing },
+  ReportedBridgeResponse: {
+    transaction: Schema.String,
+    maybeError: Schema.Option(Schema.String),
+  },
   ReportedGroups: { groups: Schema.Array(Group) },
   ReportedLightState: { name: Schema.String, state: LightState },
   ReportedBridge: { isOnline: Schema.Boolean },
@@ -293,9 +563,12 @@ const RawDevices = Schema.Array(
   Schema.Struct({
     friendly_name: Schema.String,
     ieee_address: Schema.String,
+    type: Schema.optional(Schema.String),
+    interview_state: Schema.optional(Schema.String),
     definition: Schema.optional(
       Schema.NullOr(
         Schema.Struct({
+          description: Schema.optional(Schema.NullOr(Schema.String)),
           exposes: Schema.Array(
             Schema.Struct({
               type: Schema.String,
@@ -317,6 +590,17 @@ const RawGroups = Schema.Array(
 )
 
 const RawBridgeState = Schema.Struct({ state: Schema.String })
+
+const RawBridgeInfo = Schema.Struct({
+  permit_join: Schema.Boolean,
+  permit_join_end: Schema.optional(Schema.NullOr(Schema.Number)),
+})
+
+const RawBridgeResponse = Schema.Struct({
+  status: Schema.String,
+  transaction: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.NullOr(Schema.String)),
+})
 
 const RawLightState = Schema.Struct({
   state: Power,
@@ -348,6 +632,8 @@ const decodeRawFrame = Schema.decodeUnknownOption(RawFrame)
 const decodeRawDevices = Schema.decodeUnknownOption(RawDevices)
 const decodeRawGroups = Schema.decodeUnknownOption(RawGroups)
 const decodeRawBridgeState = Schema.decodeUnknownOption(RawBridgeState)
+const decodeRawBridgeInfo = Schema.decodeUnknownOption(RawBridgeInfo)
+const decodeRawBridgeResponse = Schema.decodeUnknownOption(RawBridgeResponse)
 const decodeRawLightState = Schema.decodeUnknownOption(RawLightState)
 const decodeRawPresets = Schema.decodeUnknownOption(RawPresets)
 
@@ -374,6 +660,40 @@ const toLight = (device: RawDevice): Option.Option<Light> =>
       }
     }),
   )
+
+const COORDINATOR_TYPE = 'Coordinator'
+const FAILED_INTERVIEW = 'FAILED'
+const SUCCESSFUL_INTERVIEW = 'SUCCESSFUL'
+
+const newDeviceSetup = (device: RawDevice): NewDeviceSetup => {
+  if (device.interview_state === FAILED_INTERVIEW) {
+    return 'Failed'
+  }
+  if (Option.isSome(toLight(device))) {
+    return 'ReadyLight'
+  }
+  return device.interview_state === SUCCESSFUL_INTERVIEW
+    ? 'NotALight'
+    : 'Joining'
+}
+
+// NOTE: Zigbee2MQTT names a device after its address until someone renames it,
+// so an unnamed device is one still waiting to be set up. That survives a
+// reload or a missed event, unlike the one-off join events.
+const toNewDevice = (device: RawDevice): Option.Option<NewDevice> =>
+  device.type !== COORDINATOR_TYPE &&
+  device.friendly_name === device.ieee_address
+    ? Option.some({
+        address: device.ieee_address,
+        setup: newDeviceSetup(device),
+        maybeDescription: pipe(
+          Option.fromNullishOr(device.definition),
+          Option.flatMap(definition =>
+            Option.fromNullishOr(definition.description),
+          ),
+        ),
+      })
+    : Option.none()
 
 const toColorTempRange = (feature: RawFeature): Option.Option<ColorTempRange> =>
   Option.all({
@@ -425,6 +745,7 @@ export const decodeFrame = (text: string): Option.Option<IncomingFrame> =>
           readKnownFrame(topic, decodeRawDevices(payload), devices =>
             IncomingFrame.ReportedLights({
               lights: Array.getSomes(Array.map(devices, toLight)),
+              newDevices: Array.getSomes(Array.map(devices, toNewDevice)),
             }),
           ),
         ),
@@ -448,6 +769,37 @@ export const decodeFrame = (text: string): Option.Option<IncomingFrame> =>
         Option.some(
           readKnownFrame(topic, decodeRawBridgeState(payload), ({ state }) =>
             IncomingFrame.ReportedBridge({ isOnline: state === 'online' }),
+          ),
+        ),
+      ),
+      Match.when('bridge/info', () =>
+        Option.some(
+          readKnownFrame(topic, decodeRawBridgeInfo(payload), info =>
+            IncomingFrame.ReportedPairing({
+              pairing: info.permit_join
+                ? Pairing.Open({
+                    maybeEndsAt: Option.fromNullishOr(info.permit_join_end),
+                  })
+                : Pairing.Closed(),
+            }),
+          ),
+        ),
+      ),
+      Match.when(String.startsWith('bridge/response/'), () =>
+        pipe(
+          decodeRawBridgeResponse(payload),
+          Option.flatMap(({ status, transaction, error }) =>
+            typeof transaction === 'string'
+              ? Option.some(
+                  IncomingFrame.ReportedBridgeResponse({
+                    transaction,
+                    maybeError:
+                      status === 'ok'
+                        ? Option.none()
+                        : Option.some(error ?? 'Zigbee2MQTT refused that.'),
+                  }),
+                )
+              : Option.none(),
           ),
         ),
       ),
@@ -534,6 +886,73 @@ export const savePresetFrame = (
 
 export const deletePresetFrame = (name: string): string =>
   encodeFrame('preset/delete', { name })
+
+export const askStateFrame = (name: string): string =>
+  encodeFrame(`${name}/get`, { state: '', brightness: '' })
+
+export const BridgeRequest = defineTaggedUnion({
+  OpenPairing: { seconds: Schema.Number },
+  ClosePairing: {},
+  RenameLight: { address: Schema.String, to: Schema.String },
+  RemoveLight: { address: Schema.String, isForced: Schema.Boolean },
+  CreateGroup: { name: Schema.String },
+  RenameGroup: { from: Schema.String, to: Schema.String },
+  RemoveGroup: { name: Schema.String, isForced: Schema.Boolean },
+  AddToGroup: { address: Schema.String, group: Schema.String },
+  RemoveFromGroup: { address: Schema.String, group: Schema.String },
+})
+export type BridgeRequest = typeof BridgeRequest.Type
+
+type TopicAndPayload = readonly [string, Readonly<Record<string, unknown>>]
+
+const bridgeRequestTopicAndPayload = (
+  request: BridgeRequest,
+): TopicAndPayload =>
+  BridgeRequest.match<TopicAndPayload>(request, {
+    OpenPairing: ({ seconds }) => ['permit_join', { time: seconds }],
+    ClosePairing: () => ['permit_join', { time: 0 }],
+    RenameLight: ({ address, to }) => ['device/rename', { from: address, to }],
+    RemoveLight: ({ address, isForced }) => [
+      'device/remove',
+      { id: address, force: isForced },
+    ],
+    CreateGroup: ({ name }) => ['group/add', { friendly_name: name }],
+    RenameGroup: ({ from, to }) => ['group/rename', { from, to }],
+    RemoveGroup: ({ name, isForced }) => [
+      'group/remove',
+      { id: name, force: isForced },
+    ],
+    AddToGroup: ({ address, group }) => [
+      'group/members/add',
+      { group, device: address },
+    ],
+    RemoveFromGroup: ({ address, group }) => [
+      'group/members/remove',
+      { group, device: address },
+    ],
+  })
+
+export const bridgeRequestFrame = (
+  request: BridgeRequest,
+  transaction: string,
+): string => {
+  const [topic, payload] = bridgeRequestTopicAndPayload(request)
+  return encodeFrame(`bridge/request/${topic}`, { ...payload, transaction })
+}
+
+// NOTE: Additions run first, so a failure partway leaves a bulb in too many
+// groups rather than in none.
+export const membershipRequests = (
+  address: string,
+  change: MembershipChange,
+): ReadonlyArray<BridgeRequest> => [
+  ...Array.map(change.add, group =>
+    BridgeRequest.AddToGroup({ address, group }),
+  ),
+  ...Array.map(change.remove, group =>
+    BridgeRequest.RemoveFromGroup({ address, group }),
+  ),
+]
 
 // COLOR
 

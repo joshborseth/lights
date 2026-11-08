@@ -17,7 +17,7 @@ import { describe, test } from 'vitest'
 import { Tabs } from '@foldkit/ui'
 
 import * as Automations from './automations'
-import { PresetLook } from './domain'
+import { Pairing, PresetLook } from './domain'
 import {
   Connection,
   Message,
@@ -32,6 +32,7 @@ import {
   WaitForThrottle,
   update,
 } from './main'
+import * as Manage from './manage'
 import { view } from './view'
 
 const light = (name: string, address: string) => ({
@@ -58,9 +59,12 @@ const loaded: Model = {
   tab: 'Lights',
   tabs: Tabs.init({ id: 'app-tabs' }),
   automations: Automations.init,
+  manage: Manage.init,
   connection: Connection.Connected(),
   startup: Startup.Ready(),
   isBridgeOnline: true,
+  newDevices: [],
+  pairing: Pairing.Closed(),
   lights: [light('Living Room Orb', 'a'), light('Bedroom UFO', 'b')],
   groups: [
     { name: 'Bedroom', memberAddresses: ['b'] },

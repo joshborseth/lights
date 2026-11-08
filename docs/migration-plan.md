@@ -16,7 +16,7 @@ Replace Windfront, the Zigbee2MQTT web UI, with a small Foldkit app as the every
 
 Zigbee2MQTT and Mosquitto have to stay, because something must drive the radio. Only the UI layer changes, so the swap carries little risk: the new app is one more client.
 
-Windfront cannot be uninstalled. Zigbee2MQTT's WebSocket API comes from its frontend extension, so `frontend.enabled` stays `true`. The swap means nobody needs to open Windfront, apart from pairing a new bulb.
+Windfront cannot be uninstalled. Zigbee2MQTT's WebSocket API comes from its frontend extension, so `frontend.enabled` stays `true`. The swap means nobody needs to open Windfront: the Manage tab pairs new bulbs and edits groups.
 
 ## Architecture
 
@@ -41,9 +41,16 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 
 The app installs to a phone's home screen as a PWA. `pwa/service-worker.js` caches only the app's own built files, so the app opens without the tailnet and then reports that it cannot connect. It never touches `/api` or `/automations`, and it never queues a command. The build generates `sw.js` from it. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
 
-The app has two tabs, Lights and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
+The app has three tabs, Lights, Manage, and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
 
 The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
+
+The Manage tab pairs bulbs, renames and removes them, moves them between groups, and creates, renames, and removes groups. It uses Zigbee2MQTT's `bridge/request/*` API over the same socket, so it needs no backend.
+
+- Each change is a plan of requests, sent one at a time. The next one goes out only when `bridge/response/*` reports the previous one succeeded. Requests carry a `transaction` tagged per app instance, so a second open app can't confirm them.
+- A device whose friendly name is still its address is waiting for setup. That comes from `bridge/devices`, so it survives a reload. The pairing window comes from the retained `bridge/info`.
+- Groups nest only through shared bulbs, so moving a bulb also updates the groups around its old and new room. `moveLightChange` and its neighbors in `src/domain.ts` hold those rules. Adding to an empty group changes only that group, because it has no place in the tree yet.
+- Renaming a group also updates the PR flash if it pointed at that group.
 
 ### Automations service
 
@@ -105,7 +112,7 @@ Then use it from the phone for about a week.
 
 - Change the Zigbee2MQTT port mapping in `/srv/homeassistant/compose.yaml` to `127.0.0.1:8080:8080`, and recreate that container. Expect a short Zigbee outage.
 - Update the Zigbee2MQTT section of that folder's README.
-- Open Windfront through a tailnet-only proxy when a bulb needs pairing.
+- Open Windfront through a tailnet-only proxy only for what the Manage tab doesn't cover, such as firmware updates.
 
 **Rollback:** restore the port line. Nothing else changes, because the app holds no state of its own.
 

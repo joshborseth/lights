@@ -9,6 +9,7 @@ import * as Automations from './automations'
 import {
   IncomingFrame,
   type LightState,
+  Pairing,
   type Preset,
   PresetLook,
   SavablePresetLook,
@@ -35,6 +36,7 @@ import {
   targetStatus,
   update,
 } from './main'
+import * as Manage from './manage'
 
 const state = (power: 'ON' | 'OFF'): LightState => ({
   power,
@@ -52,9 +54,12 @@ const base: Model = {
   tab: 'Lights',
   tabs: Tabs.init({ id: 'app-tabs' }),
   automations: Automations.init,
+  manage: Manage.init,
   connection: Connection.Connected(),
   startup: Startup.Ready(),
   isBridgeOnline: true,
+  newDevices: [],
+  pairing: Pairing.Closed(),
   lights: [
     {
       name: 'Orb',
@@ -1039,7 +1044,10 @@ describe('startup', () => {
       given(loading),
       message(
         Message.ReceivedFrame({
-          frame: IncomingFrame.ReportedLights({ lights: base.lights }),
+          frame: IncomingFrame.ReportedLights({
+            lights: base.lights,
+            newDevices: [],
+          }),
         }),
       ),
       message(

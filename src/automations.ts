@@ -133,6 +133,8 @@ export const Message = defineMessageUnion({
   SubmittedDraft: {},
   SucceededSaveDraft: { snapshot: SnapshotValue },
   FailedSaveDraft: { error: Schema.String },
+  CompletedFollowGroupRename: { maybeSnapshot: Schema.Option(SnapshotValue) },
+  FailedFollowGroupRename: { error: Schema.String },
 })
 export type Message = typeof Message.Type
 
@@ -217,6 +219,39 @@ export const SaveDraft = Command.define('SaveDraft', {
     ),
 })
 
+const withFlashGroup = (config: PrMergeConfig, group: string): PrMergeConfig =>
+  modifyFields(config, {
+    flash: flash => modifyFields(flash, { group: () => group }),
+  })
+
+// NOTE: Automations store the group by name, so a rename made on the Manage
+// tab has to be carried over or the flash would point at a group that is gone.
+export const FollowGroupRename = Command.define('FollowGroupRename', {
+  args: { from: Schema.String, to: Schema.String },
+  messages: [
+    Message.CompletedFollowGroupRename,
+    Message.FailedFollowGroupRename,
+  ],
+  execute: ({ from, to }) =>
+    requestSnapshot('', {}).pipe(
+      Effect.flatMap(snapshot =>
+        snapshot.config.flash.group === from
+          ? sendJson(
+              'PUT',
+              '/config',
+              withFlashGroup(snapshot.config, to),
+            ).pipe(Effect.map(Option.some))
+          : Effect.succeed(Option.none()),
+      ),
+      Effect.map(maybeSnapshot =>
+        Message.CompletedFollowGroupRename({ maybeSnapshot }),
+      ),
+      Effect.catch(error =>
+        Effect.succeed(Message.FailedFollowGroupRename({ error })),
+      ),
+    ),
+})
+
 // VIEW HELPERS
 
 export const updated = (draft: PrMergeConfig): Message =>
@@ -237,6 +272,19 @@ export const refreshTicks = (periodMs: number): Stream.Stream<Message> =>
 // UPDATE
 
 type UpdateReturn = Update.Return<Model, Message>
+
+export const renamedGroup = (
+  model: Model,
+  { from, to }: Readonly<{ from: string; to: string }>,
+): UpdateReturn => ({
+  model: modifyFields(model, {
+    maybeDraft: maybeDraft =>
+      Option.map(maybeDraft, draft =>
+        draft.flash.group === from ? withFlashGroup(draft, to) : draft,
+      ),
+  }),
+  commands: [FollowGroupRename({ from, to })],
+})
 
 const withSnapshot = (model: Model, snapshot: Snapshot): Model =>
   modifyFields(model, { remote: () => Remote.Loaded({ snapshot }) })
@@ -425,6 +473,22 @@ export const update = (model: Model, message: Message) =>
     FailedSaveDraft: ({ error }) => ({
       model: modifyFields(model, {
         saveState: () => SaveState.Failed({ reason: error }),
+      }),
+    }),
+
+    CompletedFollowGroupRename: ({ maybeSnapshot }) => ({
+      model: Option.match(maybeSnapshot, {
+        onNone: () => model,
+        onSome: snapshot => withSnapshot(model, snapshot),
+      }),
+    }),
+
+    FailedFollowGroupRename: ({ error }) => ({
+      model: modifyFields(model, {
+        maybeProblem: () =>
+          Option.some(
+            `Couldn't point the PR flash at the renamed group: ${error}. Choose the group again in its settings.`,
+          ),
       }),
     }),
   })

@@ -65,6 +65,10 @@ const OFF_GLOW = 'oklch(0.42 0.008 70)'
 const SKELETON_GROUP_COUNT = 3
 const SKELETON_LIGHT_COUNT = 3
 
+const PAGE_COLUMN =
+  'mx-auto max-w-xl pr-[max(env(safe-area-inset-right),1rem)] pl-[max(env(safe-area-inset-left),1rem)]'
+const PAGE_HEADER =
+  'sticky top-0 z-30 bg-background pt-[max(calc(env(safe-area-inset-top)+0.75rem),1.25rem)] pb-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-background after:to-transparent'
 const SECTION = 'flex flex-col gap-3'
 const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
 const CARD_RAIL = 'ml-1.5 flex flex-col gap-3 border-l border-border pl-3'
@@ -89,13 +93,17 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   body: h.main(
     [h.Class('min-h-dvh')],
     [
+      headerView(model, h),
       h.div(
         [
           h.Class(
-            'mx-auto flex max-w-xl flex-col gap-8 pt-[max(calc(env(safe-area-inset-top)+0.75rem),2rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-[calc(env(safe-area-inset-bottom)+4rem)] pl-[max(env(safe-area-inset-left),1rem)]',
+            cn(
+              PAGE_COLUMN,
+              'flex flex-col gap-8 pt-5 pb-[calc(env(safe-area-inset-bottom)+4rem)]',
+            ),
           ),
         ],
-        [headerView(model, h), problemView(model, h), tabsView(model, h)],
+        [problemView(model, h), tabsView(model, h)],
       ),
       connectionPillView(model, h),
     ],
@@ -202,35 +210,50 @@ const connectionDotClass = (model: Model): string =>
 
 const headerView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.header(
-    [h.Class('flex items-center justify-between px-1')],
+    [h.Class(PAGE_HEADER)],
     [
       h.div(
-        [],
+        [h.Class(PAGE_COLUMN)],
         [
-          h.h1([h.Class('text-2xl font-semibold tracking-tight')], ['Lights']),
-          model.startup._tag === 'Loading' ||
-          Array.isReadonlyArrayEmpty(model.lights)
-            ? h.empty
-            : h.p(
-                [h.Class(`mt-0.5 tabular-nums ${CAPTION}`)],
+          h.div(
+            [h.Class('flex items-center justify-between px-1')],
+            [
+              h.div(
+                [],
                 [
-                  `${onCount(model, model.lights)} of ${model.lights.length} on`,
+                  h.h1(
+                    [h.Class('text-2xl font-semibold tracking-tight')],
+                    ['Lights'],
+                  ),
+                  model.startup._tag === 'Loading' ||
+                  Array.isReadonlyArrayEmpty(model.lights)
+                    ? h.empty
+                    : h.p(
+                        [h.Class(`mt-0.5 tabular-nums ${CAPTION}`)],
+                        [
+                          `${onCount(model, model.lights)} of ${model.lights.length} on`,
+                        ],
+                      ),
                 ],
               ),
-        ],
-      ),
-      h.div(
-        [h.Role('status')],
-        [
-          badge<Message>(
-            { variant: 'secondary', className: 'h-6 gap-1.5 px-2.5' },
-            [
-              h.span([
-                h.Class(`size-1.5 rounded-full ${connectionDotClass(model)}`),
-              ]),
-              connectionLabel(model),
+              h.div(
+                [h.Role('status')],
+                [
+                  badge<Message>(
+                    { variant: 'secondary', className: 'h-6 gap-1.5 px-2.5' },
+                    [
+                      h.span([
+                        h.Class(
+                          `size-1.5 rounded-full ${connectionDotClass(model)}`,
+                        ),
+                      ]),
+                      connectionLabel(model),
+                    ],
+                    h,
+                  ),
+                ],
+              ),
             ],
-            h,
           ),
         ],
       ),

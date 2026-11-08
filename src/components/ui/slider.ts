@@ -16,10 +16,11 @@ import { cn } from '@/lib/utils'
  * edge-aligned thumb/range geometry are owned by this module's view until
  * foldkit/ui gains parity (see foldcn issue tracker).
  *
- * Local gap vs upstream: a press from a finger or pen changes nothing. The
- * browser keeps scrolling along the cross axis, and the value only follows a
- * pointer that has clearly moved along the track. A mouse keeps upstream's
- * press-to-set behavior.
+ * Local gap vs upstream: a finger or pen can only grab the knob, so a swipe
+ * across the track always scrolls the page. Even on the knob a press changes
+ * nothing: the browser keeps scrolling along the cross axis, and the value only
+ * follows a pointer that has clearly moved along the track. A mouse keeps
+ * upstream's press-to-set behavior.
  */
 
 const TouchGesture = defineTaggedUnion({
@@ -93,7 +94,7 @@ export type SliderAttributes = FoldkitSlider.SliderAttributes
 
 /** Upstream SliderPrimitive.Control string. */
 export const sliderRootClass =
-  'data-horizontal:h-6 data-vertical:min-h-40 relative flex w-full data-horizontal:touch-pan-y data-vertical:touch-pan-x items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
+  'data-horizontal:h-6 data-vertical:min-h-40 relative flex w-full items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
 
 /** A slim track. The `after:` layer stretches its pointer target to 44px tall. */
 export const sliderTrackClass =
@@ -107,7 +108,7 @@ export const sliderFilledTrackClass =
  *  disabled: variants are inert under foldkit (aria-/data- twins are inlined at
  *  style resolution). */
 export const sliderThumbClass =
-  'ring-white/15 relative cursor-grab rounded-full bg-white shadow-[0_1px_4px_rgb(0_0_0/0.45)] transition-[left,box-shadow,scale] duration-200 ease-out hover:ring-4 focus-visible:ring-4 focus-visible:ring-ring focus-visible:outline-hidden data-dragging:scale-110 data-dragging:ring-6 data-dragging:transition-[box-shadow,scale] motion-reduce:transition-none aria-disabled:pointer-events-none aria-disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50'
+  'ring-white/15 relative cursor-grab after:absolute after:-inset-2.5 after:rounded-full rounded-full bg-white shadow-[0_1px_4px_rgb(0_0_0/0.45)] transition-[left,box-shadow,scale] duration-200 ease-out hover:ring-4 focus-visible:ring-4 focus-visible:ring-ring focus-visible:outline-hidden data-dragging:scale-110 data-dragging:ring-6 data-dragging:transition-[box-shadow,scale] motion-reduce:transition-none aria-disabled:pointer-events-none aria-disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50'
 
 export const sliderLabelClass = 'text-sm font-medium'
 
@@ -120,8 +121,8 @@ export const sliderHeaderClass = 'flex items-center justify-between'
 const LEFT_MOUSE_BUTTON = 0
 const THUMB_SIZE_PX = 24
 const THUMB_SIZE = `${String(THUMB_SIZE_PX)}px`
-const TOUCH_SLOP_PX = 8
-const TOUCH_SIDEWAYS_RATIO = 1.5
+const TOUCH_SLOP_PX = 12
+const TOUCH_SIDEWAYS_RATIO = 2
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max)
@@ -558,18 +559,10 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
     _timeStamp: number,
     clientX: number,
     clientY: number,
-    pointerId: number,
   ): Option.Option<Message> =>
-    pipe(
-      button,
-      Option.liftPredicate(Equal.equals(LEFT_MOUSE_BUTTON)),
-      Option.flatMap(
-        (): Option.Option<Message> =>
-          pointerType === 'mouse'
-            ? pointerAtPointer(clientX, clientY)
-            : pressedByTouch(clientX, clientY, pointerId),
-      ),
-    )
+    pointerType === 'mouse' && button === LEFT_MOUSE_BUTTON
+      ? pointerAtPointer(clientX, clientY)
+      : Option.none()
 
   const thumbPointerHandler = (
     pointerType: string,
@@ -611,7 +604,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
     h.DataAttribute('slider-track-id', id),
     h.DataAttribute('orientation', orientation),
     h.DataAttribute(orientation, ''),
-    h.Style({ position: 'relative', 'touch-action': touchActionOf(orientation) }),
+    h.Style({ position: 'relative' }),
     ...stateAttributes,
     ...trackInteractionAttributes,
   ]

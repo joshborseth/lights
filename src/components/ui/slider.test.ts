@@ -68,7 +68,7 @@ describe('touch gesture', () => {
   })
 
   test('a small wiggle stays undecided and changes nothing', () => {
-    const result = move(pressed(), 155, 403)
+    const result = move(pressed(), 160, 405)
     expect(result.outMessage).toBeUndefined()
     expect(result.model.touchGesture._tag).toBe('Deciding')
   })
@@ -80,7 +80,13 @@ describe('touch gesture', () => {
   })
 
   test('a diagonal swipe is not clearly sideways', () => {
-    const result = move(pressed(), 162, 410)
+    const result = move(pressed(), 164, 408)
+    expect(result.outMessage).toBeUndefined()
+    expect(result.model.touchGesture._tag).toBe('Idle')
+  })
+
+  test('a mostly sideways swipe that also drifts is not a drag', () => {
+    const result = move(pressed(), 168, 410)
     expect(result.outMessage).toBeUndefined()
     expect(result.model.touchGesture._tag).toBe('Idle')
   })

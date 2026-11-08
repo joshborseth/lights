@@ -175,14 +175,6 @@
     -webkit-tap-highlight-color: transparent;
     -webkit-text-size-adjust: 100%;
   }
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0 0 auto;
-    z-index: 40;
-    height: env(safe-area-inset-top);
-    background: var(--background);
-  }
   button,
   label {
     -webkit-touch-callout: none;

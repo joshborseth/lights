@@ -391,7 +391,18 @@ describe('view', () => {
       )
     })
 
-    test('the slider leaves vertical panning to the browser', () => {
+    test('a touch on the track leaves the slider alone', () => {
+      scene(
+        { update, view: viewWithSliderProbe },
+        given(loaded),
+        pointerDown('[data-slot="slider-track"]', touch),
+        expectIgnored(),
+        Command.expectNone(),
+        expect(text('no gesture')).toExist(),
+      )
+    })
+
+    test('the knob leaves vertical panning to the browser', () => {
       scene(
         { update, view },
         given(loaded),

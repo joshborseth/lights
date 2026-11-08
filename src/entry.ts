@@ -7,8 +7,8 @@ import {
   managedResources,
   subscriptions,
   update,
-  view,
 } from './main'
+import { view } from './view'
 
 const application = Runtime.makeApplication({
   Model,

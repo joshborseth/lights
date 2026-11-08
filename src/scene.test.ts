@@ -1,181 +1,150 @@
-import { DateTime } from 'effect'
-import {
-  Command,
-  ManagedResource,
-  Subscription,
-  click,
-  expect,
-  given,
-  placeholder,
-  role,
-  scene,
-  text,
-  type,
-} from 'foldkit/scene'
-import { modifyFields } from 'foldkit/struct'
+import { Option } from 'effect'
+import { Command, click, expect, given, role, scene, text } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
+import { PresetLook } from './domain'
 import {
-  ConnectionState,
+  Connection,
   Message,
-  Model,
-  SendMessage,
-  TimestampReceivedMessage,
-  TimestampSentMessage,
-  managedResources,
+  type Model,
+  PresetEditor,
+  SendFrame,
+  SendFrameTwice,
   update,
-  view,
 } from './main'
+import { view } from './view'
 
-const idleModel = Model.make({
-  connection: ConnectionState.Disconnected(),
-  messages: [],
-  messageInput: '',
+const light = (name: string, address: string) => ({
+  name,
+  address,
+  maybeColorTempRange: Option.some({ min: 153, max: 555 }),
+  supportsColor: true,
 })
 
-const zonedAt = (timestamp: number) =>
-  DateTime.makeZonedUnsafe(timestamp, { timeZone: 'UTC' })
+const on = {
+  power: 'ON' as const,
+  brightness: 120,
+  maybeColorTemp: Option.some(370),
+  maybeHueSaturation: Option.some({ hue: 32, saturation: 82 }),
+}
+
+const loaded: Model = {
+  connection: Connection.Connected(),
+  isBridgeOnline: true,
+  lights: [light('Living Room Orb', 'a'), light('Bedroom UFO', 'b')],
+  groups: [
+    { name: 'Bedroom', memberAddresses: ['b'] },
+    { name: 'All Lights', memberAddresses: ['a', 'b'] },
+  ],
+  states: {
+    'Living Room Orb': on,
+    'Bedroom UFO': { ...on, power: 'OFF' },
+  },
+  presets: [
+    {
+      name: 'Red',
+      brightness: 254,
+      look: PresetLook.Color({ hex: '#FF0000' }),
+    },
+    { name: 'Rainbow', brightness: 254, look: PresetLook.Rainbow() },
+  ],
+  drafts: [],
+  maybeExpanded: Option.none(),
+  presetEditor: PresetEditor.Closed(),
+  maybeProblem: Option.none(),
+}
 
 describe('view', () => {
-  test('initial view shows the heading, status, and a Connect button', () => {
+  test('shows a waiting state before any lights arrive', () => {
     scene(
       { update, view },
-      given(idleModel),
-      expect(text('WebSocket Chat')).toExist(),
-      expect(text('Disconnected')).toExist(),
-      expect(role('button', { name: 'Connect to Chat' })).toExist(),
-      expect(text('No messages yet')).toExist(),
+      given({
+        ...loaded,
+        lights: [],
+        connection: Connection.Connecting({ attempt: 0 }),
+      }),
+      expect(text('Connecting to your lights…')).toExist(),
     )
   })
 
-  test('connecting state renders the Connecting message', () => {
+  test('shows groups, rooms, and live status', () => {
     scene(
       { update, view },
-      given(
-        modifyFields(idleModel, {
-          connection: () => ConnectionState.Connecting(),
-        }),
+      given(loaded),
+      expect(role('status')).toHaveText('Live'),
+      expect(role('article', { name: 'All Lights' })).toExist(),
+      expect(role('region', { name: 'Living Room' })).toExist(),
+      expect(role('button', { name: 'Living Room Orb power' })).toHaveText(
+        'On',
       ),
-      expect(text('Connecting...')).toExist(),
+      expect(role('button', { name: 'Bedroom UFO power' })).toHaveText('Off'),
+      expect(
+        role('slider', { name: 'Living Room Orb brightness' }),
+      ).toHaveValue('120'),
     )
   })
 
-  test('connected state shows the message input and Send button', () => {
+  test('offers presets on All Lights but never on Bedroom', () => {
     scene(
       { update, view },
-      given(
-        modifyFields(idleModel, {
-          connection: () => ConnectionState.Connected(),
-        }),
-      ),
-      expect(placeholder('Type a message...')).toExist(),
-      expect(role('button', { name: 'Send' })).toBeDisabled(),
-      type(placeholder('Type a message...'), 'hi'),
-      expect(role('button', { name: 'Send' })).toBeEnabled(),
+      given(loaded),
+      expect(role('button', { name: 'Red on All Lights' })).toExist(),
+      expect(role('button', { name: 'Red on Bedroom' })).not.toExist(),
     )
   })
 
-  test('error state renders the error and a Try Again button', () => {
+  test('clicking a bulb sends its power command', () => {
     scene(
       { update, view },
-      given(
-        modifyFields(idleModel, {
-          connection: () =>
-            ConnectionState.Error({
-              error: 'Connection refused',
-            }),
-        }),
-      ),
-      expect(text('Connection Error')).toExist(),
-      expect(text('Connection refused')).toExist(),
-      expect(role('button', { name: 'Try Again' })).toExist(),
-    )
-  })
-
-  test('messages render in the conversation list', () => {
-    scene(
-      { update, view },
-      given(
-        modifyFields(idleModel, {
-          connection: () => ConnectionState.Connected(),
-          messages: () => [
-            { text: 'Hello there', zoned: zonedAt(0), isSent: true },
-            { text: 'General Kenobi', zoned: zonedAt(0), isSent: false },
-          ],
-        }),
-      ),
-      expect(text('Hello there')).toExist(),
-      expect(text('General Kenobi')).toExist(),
-      expect(text('No messages yet')).toBeAbsent(),
-    )
-  })
-
-  test('a successful acquisition connects the chat and the user can send a message', () => {
-    scene(
-      { update, view },
-      given(idleModel),
-      click(role('button', { name: 'Connect to Chat' })),
-      expect(text('Connecting...')).toExist(),
-      ManagedResource.acquire(managedResources.chatSocket),
-      expect(placeholder('Type a message...')).toExist(),
-      type(placeholder('Type a message...'), 'hi there'),
-      click(role('button', { name: 'Send' })),
-      Command.expectExact(SendMessage({ text: 'hi there' })),
-      Command.resolve(
-        SendMessage,
-        Message.SucceededSendMessage({ text: 'hi there' }),
-      ),
-      Command.resolve(
-        TimestampSentMessage,
-        Message.TimestampedMessage({
-          text: 'hi there',
-          zoned: zonedAt(0),
-          isSent: true,
-        }),
-      ),
-      expect(text('hi there')).toExist(),
-      expect(text('No messages yet')).toBeAbsent(),
-    )
-  })
-
-  test('a failed socket acquisition shows the connection error', () => {
-    scene(
-      { update, view },
-      given(idleModel),
-      click(role('button', { name: 'Connect to Chat' })),
-      expect(text('Connecting...')).toExist(),
-      ManagedResource.failAcquire(
-        managedResources.chatSocket,
-        new Error('Connection timeout'),
-      ),
-      expect(text('Connection Error')).toExist(),
-      expect(text('Connection timeout')).toExist(),
-      expect(role('button', { name: 'Try Again' })).toExist(),
-    )
-  })
-
-  test('a message arriving on the socket Subscription lands in the conversation', () => {
-    scene(
-      { update, view },
-      given(
-        modifyFields(idleModel, {
-          connection: () => ConnectionState.Connected(),
-        }),
-      ),
-      Subscription.emit(Message.ReceivedMessage({ text: 'hello from echo' })),
+      given(loaded),
+      click(role('button', { name: 'Bedroom UFO power' })),
       Command.expectExact(
-        TimestampReceivedMessage({ text: 'hello from echo' }),
-      ),
-      Command.resolve(
-        TimestampReceivedMessage,
-        Message.TimestampedMessage({
-          text: 'hello from echo',
-          zoned: zonedAt(0),
-          isSent: false,
+        SendFrame({
+          frame: JSON.stringify({
+            topic: 'Bedroom UFO/set',
+            payload: { state: 'ON' },
+          }),
         }),
       ),
-      expect(text('hello from echo')).toExist(),
-      expect(text('No messages yet')).toBeAbsent(),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+    )
+  })
+
+  test('clicking a group sends its command twice', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      click(role('button', { name: 'All Lights power' })),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+    )
+  })
+
+  test('reveals color controls on request', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      expect(role('slider', { name: 'Bedroom UFO temperature' })).not.toExist(),
+      click(role('button', { name: 'Bedroom UFO color' })),
+      expect(role('slider', { name: 'Bedroom UFO temperature' })).toExist(),
+    )
+  })
+
+  test('Rainbow has no edit button', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      expect(role('button', { name: 'Edit Red' })).toExist(),
+      expect(role('button', { name: 'Edit Rainbow' })).not.toExist(),
+    )
+  })
+
+  test('new preset opens an editor that needs a name', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      click(role('button', { name: 'New preset' })),
+      expect(text('Give the preset a name.')).toExist(),
+      expect(role('button', { name: 'Save' })).toBeDisabled(),
     )
   })
 })

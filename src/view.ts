@@ -8,10 +8,12 @@ import { button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { input } from '@/components/ui/input'
+import { skeleton } from '@/components/ui/skeleton'
 import * as Slider from '@/components/ui/slider'
 import { spinner } from '@/components/ui/spinner'
 import { switch_ } from '@/components/ui/switch'
 import { icon } from '@/lib/icons'
+import { cn } from '@/lib/utils'
 
 import {
   type Group,
@@ -24,6 +26,7 @@ import {
   Setting,
 } from './domain'
 import {
+  type Activity,
   Connection,
   type EditingPreset,
   Message,
@@ -31,10 +34,15 @@ import {
   PRESET_COLOR_TEMP_RANGE,
   PresetEditor,
   SliderId,
+  Startup,
   Target,
   type TargetStatus,
+  activityOf,
+  canControl,
   draftSetting,
+  isEditorBusy,
   isExpanded,
+  isStrugglingToConnect,
   lightsOfTarget,
   presetEditorProblem,
   sliderDomId,
@@ -60,6 +68,8 @@ const GROUP_ORDER: ReadonlyArray<string> = [
 const WARM_WHITE = '#ffdfae'
 const MIN_GLOW_LEVEL = 0.3
 const OFF_GLOW = 'oklch(0.42 0.008 70)'
+const SKELETON_GROUP_COUNT = 3
+const SKELETON_LIGHT_COUNT = 3
 
 const SECTION = 'flex flex-col gap-3'
 const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
@@ -102,36 +112,58 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             'mx-auto flex max-w-xl flex-col gap-8 px-4 pt-[max(env(safe-area-inset-top),2rem)] pb-16',
           ),
         ],
-        [
-          headerView(model, h),
-          problemView(model, h),
-          ...(Array.isReadonlyArrayEmpty(model.lights)
-            ? [emptyView(model, h)]
-            : [
-                groupsView(model, h),
-                ...roomsView(model, h),
-                presetsView(model, h),
-              ]),
-        ],
+        [headerView(model, h), problemView(model, h), bodyView(model, h)],
       ),
+      connectionPillView(model, h),
     ],
   ),
 })
 
+const bodyView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  Startup.match(model.startup, {
+    Loading: () =>
+      isStrugglingToConnect(model.connection)
+        ? unreachableView(h)
+        : skeletonView(model, h),
+    Ready: () =>
+      Array.isReadonlyArrayEmpty(model.lights)
+        ? noLightsView(model, h)
+        : controlsView(model, h),
+  })
+
+const controlsView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const isLive = canControl(model)
+  return h.div(
+    [
+      h.Class(
+        cn(
+          'flex animate-in flex-col gap-8 transition-opacity duration-300 fade-in',
+          !isLive && 'opacity-50 delay-500',
+        ),
+      ),
+      h.Inert(!isLive),
+    ],
+    [groupsView(model, h), ...roomsView(model, h), presetsView(model, h)],
+  )
+}
+
 const connectionLabel = (model: Model): string =>
-  Connection.match(model.connection, {
-    Connecting: () => 'Connecting…',
-    WaitingToReconnect: () => 'Reconnecting…',
-    Connected: () => (model.isBridgeOnline ? 'Live' : 'Zigbee offline'),
+  Startup.match(model.startup, {
+    Loading: () => 'Connecting…',
+    Ready: () =>
+      Connection.match(model.connection, {
+        Connecting: () => 'Reconnecting…',
+        WaitingToReconnect: () => 'Reconnecting…',
+        Connected: () => (model.isBridgeOnline ? 'Live' : 'Zigbee offline'),
+      }),
   })
 
 const connectionDotClass = (model: Model): string =>
-  Connection.match(model.connection, {
-    Connecting: () => 'animate-pulse bg-primary',
-    WaitingToReconnect: () => 'animate-pulse bg-primary',
-    Connected: () =>
-      model.isBridgeOnline ? 'bg-emerald-400' : 'bg-destructive',
-  })
+  model.startup._tag === 'Loading' || model.connection._tag !== 'Connected'
+    ? 'animate-pulse bg-primary'
+    : model.isBridgeOnline
+      ? 'bg-emerald-400'
+      : 'bg-destructive'
 
 const headerView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.header(
@@ -141,6 +173,7 @@ const headerView = (model: Model, h: HtmlBuilder<Message>): Html =>
         [],
         [
           h.h1([h.Class('text-2xl font-semibold tracking-tight')], ['Lights']),
+          model.startup._tag === 'Loading' ||
           Array.isReadonlyArrayEmpty(model.lights)
             ? h.empty
             : h.p(
@@ -180,7 +213,100 @@ const problemView = (model: Model, h: HtmlBuilder<Message>): Html =>
       ),
   })
 
-const emptyView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const connectionPillView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  canControl(model) || model.startup._tag === 'Loading'
+    ? h.empty
+    : h.div(
+        [
+          h.Class(
+            'delayed-reveal pointer-events-none fixed inset-x-0 bottom-[max(env(safe-area-inset-bottom),1rem)] z-10 flex justify-center',
+          ),
+        ],
+        [
+          badge<Message>(
+            { variant: 'secondary', className: 'h-8 gap-2 px-3 shadow-lg' },
+            [
+              spinner<Message>(
+                { className: 'size-3.5 text-muted-foreground' },
+                h,
+              ),
+              connectionLabel(model),
+            ],
+            h,
+          ),
+        ],
+      )
+
+const skeletonTargetView = (h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-3')],
+    [
+      h.div(
+        [h.Class('flex items-center gap-3')],
+        [
+          skeleton<Message>({ className: 'size-3 rounded-full' }, [], h),
+          h.div(
+            [h.Class('flex min-w-0 flex-1 flex-col gap-1.5')],
+            [
+              skeleton<Message>({ className: 'h-4 w-32' }, [], h),
+              skeleton<Message>({ className: 'h-3 w-16' }, [], h),
+            ],
+          ),
+          skeleton<Message>({ className: 'h-7 w-12 rounded-full' }, [], h),
+        ],
+      ),
+      skeleton<Message>({ className: 'h-9 w-full rounded-lg' }, [], h),
+    ],
+  )
+
+const skeletonView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('delayed-reveal flex flex-col gap-8'), h.AriaBusy(true)],
+    [
+      h.p(
+        [h.Class('sr-only')],
+        [
+          model.connection._tag === 'Connected'
+            ? 'Loading your lights…'
+            : 'Connecting to your lights…',
+        ],
+      ),
+      h.div(
+        [h.Class(SECTION)],
+        Array.makeBy(SKELETON_GROUP_COUNT, () =>
+          Card<Message>(
+            {},
+            [
+              Card.content<Message>(
+                { className: 'flex flex-col gap-4' },
+                [skeletonTargetView(h)],
+                h,
+              ),
+            ],
+            h,
+          ),
+        ),
+      ),
+      h.div(
+        [h.Class(SECTION)],
+        [
+          skeleton<Message>({ className: 'mx-1 h-4 w-24' }, [], h),
+          Card<Message>(
+            { className: 'gap-0 py-0' },
+            Array.makeBy(SKELETON_LIGHT_COUNT, () =>
+              h.div(
+                [h.Class('not-first:border-t border-border p-4')],
+                [skeletonTargetView(h)],
+              ),
+            ),
+            h,
+          ),
+        ],
+      ),
+    ],
+  )
+
+const unreachableView = (h: HtmlBuilder<Message>): Html =>
   Empty<Message>(
     { className: 'py-24' },
     [
@@ -197,13 +323,10 @@ const emptyView = (model: Model, h: HtmlBuilder<Message>): Html =>
             ],
             h,
           ),
+          Empty.title<Message>({}, ["Can't reach Zigbee2MQTT"], h),
           Empty.description<Message>(
             {},
-            [
-              model.connection._tag === 'Connected'
-                ? 'Waiting for your lights…'
-                : 'Connecting to your lights…',
-            ],
+            ['Still trying. This page will pick up as soon as it answers.'],
             h,
           ),
         ],
@@ -212,6 +335,28 @@ const emptyView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
     h,
   )
+
+const noLightsView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  model.connection._tag === 'Connected'
+    ? Empty<Message>(
+        { className: 'py-24' },
+        [
+          Empty.header<Message>(
+            {},
+            [
+              Empty.title<Message>({}, ['No lights found'], h),
+              Empty.description<Message>(
+                {},
+                ['Lights paired with Zigbee2MQTT show up here.'],
+                h,
+              ),
+            ],
+            h,
+          ),
+        ],
+        h,
+      )
+    : unreachableView(h)
 
 const glowColor = (status: TargetStatus): string =>
   status.isOn ? Option.getOrElse(status.maybeHex, () => WARM_WHITE) : OFF_GLOW
@@ -244,7 +389,12 @@ const groupCardView = (
   const lights = lightsOfTarget(model, target)
   return h.keyed('article')(
     group.name,
-    [h.AriaLabel(group.name), glowAttribute(status, h)],
+    [
+      h.AriaLabel(group.name),
+      h.AriaBusy(isBusyActivity(activityOf(model, target))),
+      h.Class('glow-transition'),
+      glowAttribute(status, h),
+    ],
     [
       Card<Message>(
         { className: 'bulb-glow transition-shadow' },
@@ -298,6 +448,37 @@ const roomsView = (
     }),
   )
 
+const lightDetail = (
+  model: Model,
+  target: Target,
+  status: TargetStatus,
+): string => {
+  if (!status.hasReported) {
+    return 'Not reporting'
+  }
+  return status.isOn
+    ? formatPercent(shownBrightness(model, target, status))
+    : 'Off'
+}
+
+const shownBrightness = (
+  model: Model,
+  target: Target,
+  status: TargetStatus,
+): number =>
+  Option.match(draftSetting(model, target, 'Brightness'), {
+    onNone: () => status.brightness,
+    onSome: setting =>
+      Setting.match(setting, {
+        Brightness: ({ value }) => value,
+        ColorTemp: () => status.brightness,
+        Color: () => status.brightness,
+      }),
+  })
+
+const isBusyActivity = (maybeActivity: Option.Option<Activity>): boolean =>
+  Option.exists(maybeActivity, activity => activity._tag !== 'NoResponse')
+
 const lightRowView = (
   model: Model,
   light: Light,
@@ -309,15 +490,18 @@ const lightRowView = (
     light.address,
     [
       h.AriaLabel(light.name),
+      h.AriaBusy(isBusyActivity(activityOf(model, target))),
       glowAttribute(status, h),
-      h.Class('not-first:border-t border-border flex flex-col gap-3 p-4'),
+      h.Class(
+        'glow-transition not-first:border-t border-border flex flex-col gap-3 p-4',
+      ),
     ],
     [
       targetControlsView(
         model,
         target,
         light.name,
-        status.isOn ? formatPercent(status.brightness) : 'Off',
+        lightDetail(model, target, status),
         status,
         h,
       ),
@@ -337,6 +521,15 @@ const targetControlsView = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const isOpen = isExpanded(model, target)
+  const maybeActivity = activityOf(model, target)
+  const hasNoResponse = Option.exists(
+    maybeActivity,
+    activity => activity._tag === 'NoResponse',
+  )
+  const isSettingPower = Option.exists(
+    maybeActivity,
+    activity => activity._tag === 'SettingPower',
+  )
   const hasColorControls =
     Option.isSome(status.maybeColorTempRange) || status.supportsColor
   return h.div(
@@ -350,26 +543,29 @@ const targetControlsView = (
             [h.Class('min-w-0 flex-1')],
             [
               h.p([h.Class('truncate font-medium')], [name]),
-              h.p([h.Class(`tabular-nums ${CAPTION}`)], [detail]),
+              h.p(
+                [
+                  h.Class(
+                    cn(
+                      'tabular-nums',
+                      CAPTION,
+                      hasNoResponse && 'text-destructive',
+                    ),
+                  ),
+                ],
+                [hasNoResponse ? 'No response' : detail],
+              ),
             ],
           ),
           hasColorControls ? colorButtonView(target, name, isOpen, h) : h.empty,
-          powerSwitchView(target, name, status, h),
+          powerSwitchView(target, name, status, isSettingPower, h),
         ],
       ),
       sliderView(
         model,
         SliderId.TargetBrightness({ target }),
         `${name} brightness`,
-        Option.match(draftSetting(model, target, 'Brightness'), {
-          onNone: () => status.brightness,
-          onSome: setting =>
-            Setting.match(setting, {
-              Brightness: ({ value }) => value,
-              ColorTemp: () => status.brightness,
-              Color: () => status.brightness,
-            }),
-        }),
+        shownBrightness(model, target, status),
         formatPercent,
         { filledTrackClass: 'bg-(--glow)' },
         h,
@@ -412,6 +608,7 @@ const powerSwitchView = (
   target: Target,
   name: string,
   status: TargetStatus,
+  isSettingPower: boolean,
   h: HtmlBuilder<Message>,
 ): Html =>
   switch_<Message>(
@@ -422,8 +619,10 @@ const powerSwitchView = (
       onToggle: () => Message.ClickedPower({ target }),
       className:
         'data-checked:bg-(--glow) data-[size=default]:h-7 data-[size=default]:w-12',
-      thumbClass:
+      thumbClass: cn(
         'bg-white shadow-sm dark:data-checked:bg-white dark:data-unchecked:bg-foreground group-data-[size=default]/switch:size-6 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-3px)] group-data-[size=default]/switch:data-unchecked:translate-x-px',
+        isSettingPower && 'pending-spinner',
+      ),
       labelClass: 'sr-only',
       wrapperClass: 'gap-0',
     },
@@ -470,7 +669,7 @@ const colorControlsView = (
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
-    [h.Class('flex flex-col gap-3')],
+    [h.Class('flex animate-in flex-col gap-3 duration-150 fade-in')],
     [
       Option.match(status.maybeColorTempRange, {
         onNone: () => h.empty,
@@ -562,9 +761,16 @@ const presetDotView = (
   preset: Preset,
   sizeClass: string,
   h: HtmlBuilder<Message>,
+  isApplying = false,
 ): Html =>
   h.span([
-    h.Class(`${sizeClass} shrink-0 rounded-full`),
+    h.Class(
+      cn(
+        sizeClass,
+        'shrink-0 rounded-full',
+        isApplying && 'pending-spinner pending-spinner-around',
+      ),
+    ),
     h.Style({ background: presetSwatch(preset) }),
   ])
 
@@ -582,8 +788,15 @@ const presetChipsView = (
   target: Target,
   status: TargetStatus,
   h: HtmlBuilder<Message>,
-): Html =>
-  h.div(
+): Html => {
+  const maybeActivity = activityOf(model, target)
+  const isApplying = (preset: Preset): boolean =>
+    Option.exists(
+      maybeActivity,
+      activity =>
+        activity._tag === 'ApplyingPreset' && activity.preset === preset.name,
+    )
+  return h.div(
     [
       h.Class(
         'no-scrollbar -mx-(--card-spacing) flex gap-2 overflow-x-auto px-(--card-spacing)',
@@ -598,19 +811,30 @@ const presetChipsView = (
             {
               variant: 'secondary',
               onClick: Message.ClickedPreset({ target, preset: preset.name }),
-              className: 'h-9 gap-2 rounded-full pr-3.5 pl-2.5',
-              attributes: [h.AriaLabel(`${preset.name} on ${target.name}`)],
+              className: cn(
+                'h-9 gap-2 rounded-full pr-3.5 pl-2.5',
+                isApplying(preset) && 'ring-1 ring-primary/60',
+              ),
+              attributes: [
+                h.AriaLabel(`${preset.name} on ${target.name}`),
+                h.AriaBusy(isApplying(preset)),
+              ],
             },
-            [presetDotView(preset, 'size-3.5', h), preset.name],
+            [
+              presetDotView(preset, 'size-3.5', h, isApplying(preset)),
+              preset.name,
+            ],
             h,
           ),
         ],
       ),
     ),
   )
+}
 
-const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.section(
+const presetsView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const isBusy = isEditorBusy(model.presetEditor)
+  return h.section(
     [h.Class(SECTION), h.AriaLabel('Presets')],
     [
       h.div(
@@ -622,6 +846,7 @@ const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
               variant: 'ghost',
               size: 'sm',
               onClick: Message.ClickedNewPreset(),
+              isDisabled: isBusy,
               className: 'text-muted-foreground',
             },
             [icon(h, Plus, 'size-3.5', 'inline-start'), 'New preset'],
@@ -631,7 +856,12 @@ const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
       ),
       PresetEditor.match(model.presetEditor, {
         Closed: () => h.empty,
-        Open: ({ editing }) => presetEditorView(model, editing, h),
+        Open: ({ editing, maybeFailure }) =>
+          presetEditorView(model, editing, maybeFailure, h),
+        Saving: ({ editing }) =>
+          presetEditorView(model, editing, Option.none(), h),
+        Deleting: ({ editing }) =>
+          presetEditorView(model, editing, Option.none(), h),
       }),
       Card<Message>(
         { className: 'gap-0 py-0' },
@@ -652,8 +882,8 @@ const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
                   PresetLook.match(preset.look, {
                     Rainbow: () =>
                       badge<Message>({ variant: 'secondary' }, ['Built in'], h),
-                    Color: () => editPresetButtonView(preset, h),
-                    White: () => editPresetButtonView(preset, h),
+                    Color: () => editPresetButtonView(preset, isBusy, h),
+                    White: () => editPresetButtonView(preset, isBusy, h),
                   }),
                 ],
               ),
@@ -664,13 +894,19 @@ const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
       ),
     ],
   )
+}
 
-const editPresetButtonView = (preset: Preset, h: HtmlBuilder<Message>): Html =>
+const editPresetButtonView = (
+  preset: Preset,
+  isDisabled: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
   button<Message>(
     {
       variant: 'ghost',
       size: 'icon-lg',
       onClick: Message.ClickedEditPreset({ preset: preset.name }),
+      isDisabled,
       className: '-mr-2 text-muted-foreground',
       attributes: [h.AriaLabel(`Edit ${preset.name}`)],
     },
@@ -678,17 +914,33 @@ const editPresetButtonView = (preset: Preset, h: HtmlBuilder<Message>): Html =>
     h,
   )
 
+const pendingButtonLabel = (
+  isPending: boolean,
+  pendingLabel: string,
+  label: string,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> =>
+  isPending
+    ? [spinner<Message>({ className: 'size-3.5' }, h), pendingLabel]
+    : [label]
+
 const presetEditorView = (
   model: Model,
   editing: EditingPreset,
+  maybeFailure: Option.Option<string>,
   h: HtmlBuilder<Message>,
 ): Html => {
   const maybeProblem = presetEditorProblem(model, editing)
   const isNew = Option.isNone(editing.maybeOriginalName)
+  const isSaving = model.presetEditor._tag === 'Saving'
+  const isDeleting = model.presetEditor._tag === 'Deleting'
+  const isBusy = isEditorBusy(model.presetEditor)
   return h.form(
     [
       h.AriaLabel(isNew ? 'New preset' : 'Edit preset'),
+      h.AriaBusy(isBusy),
       h.OnSubmit(Message.SubmittedEditor()),
+      h.Class('animate-in duration-150 fade-in slide-in-from-top-1'),
     ],
     [
       Card<Message>(
@@ -697,44 +949,65 @@ const presetEditorView = (
           Card.content<Message>(
             { className: 'flex flex-col gap-4' },
             [
-              input<Message>(
-                {
-                  id: 'preset-name',
-                  label: 'Preset name',
-                  value: editing.name,
-                  onInput: value => Message.UpdatedEditorName({ value }),
-                  className: 'h-10',
-                },
-                h,
-              ),
               h.div(
-                [h.Class('flex flex-col gap-1.5')],
                 [
+                  h.Class(
+                    cn(
+                      'flex flex-col gap-4 transition-opacity',
+                      isBusy && 'opacity-60',
+                    ),
+                  ),
+                  h.Inert(isBusy),
+                ],
+                [
+                  input<Message>(
+                    {
+                      id: 'preset-name',
+                      label: 'Preset name',
+                      value: editing.name,
+                      onInput: value => Message.UpdatedEditorName({ value }),
+                      className: 'h-10',
+                    },
+                    h,
+                  ),
                   h.div(
-                    [h.Class(`flex justify-between px-1 ${CAPTION}`)],
+                    [h.Class('flex flex-col gap-1.5')],
                     [
-                      h.span([], ['Brightness']),
-                      h.span(
-                        [h.Class('tabular-nums')],
-                        [formatPercent(editing.brightness)],
+                      h.div(
+                        [h.Class(`flex justify-between px-1 ${CAPTION}`)],
+                        [
+                          h.span([], ['Brightness']),
+                          h.span(
+                            [h.Class('tabular-nums')],
+                            [formatPercent(editing.brightness)],
+                          ),
+                        ],
+                      ),
+                      sliderView(
+                        model,
+                        SliderId.EditorBrightness(),
+                        'Preset brightness',
+                        editing.brightness,
+                        formatPercent,
+                        { filledTrackClass: 'bg-primary' },
+                        h,
                       ),
                     ],
                   ),
-                  sliderView(
-                    model,
-                    SliderId.EditorBrightness(),
-                    'Preset brightness',
-                    editing.brightness,
-                    formatPercent,
-                    { filledTrackClass: 'bg-primary' },
-                    h,
-                  ),
+                  lookEditorView(model, editing, h),
                 ],
               ),
-              lookEditorView(model, editing, h),
               Option.match(maybeProblem, {
                 onNone: () => h.empty,
                 onSome: problem => h.p([h.Class(CAPTION)], [problem]),
+              }),
+              Option.match(maybeFailure, {
+                onNone: () => h.empty,
+                onSome: failure =>
+                  h.p(
+                    [h.Class('text-xs text-destructive'), h.Role('alert')],
+                    [failure],
+                  ),
               }),
               h.div(
                 [h.Class('flex gap-2')],
@@ -743,10 +1016,10 @@ const presetEditorView = (
                     {
                       type: 'submit',
                       size: 'lg',
-                      isDisabled: Option.isSome(maybeProblem),
-                      className: 'px-4',
+                      isDisabled: Option.isSome(maybeProblem) || isBusy,
+                      className: 'min-w-20 px-4',
                     },
-                    'Save',
+                    pendingButtonLabel(isSaving, 'Saving…', 'Save', h),
                     h,
                   ),
                   button<Message>(
@@ -754,6 +1027,7 @@ const presetEditorView = (
                       variant: 'secondary',
                       size: 'lg',
                       onClick: Message.ClickedCancelEditor(),
+                      isDisabled: isBusy,
                       className: 'px-4',
                     },
                     'Cancel',
@@ -766,9 +1040,15 @@ const presetEditorView = (
                           variant: 'destructive',
                           size: 'lg',
                           onClick: Message.ClickedDeletePreset(),
-                          className: 'ml-auto px-4',
+                          isDisabled: isBusy,
+                          className: 'ml-auto min-w-20 px-4',
                         },
-                        'Delete',
+                        pendingButtonLabel(
+                          isDeleting,
+                          'Deleting…',
+                          'Delete',
+                          h,
+                        ),
                         h,
                       ),
                 ],

@@ -13,14 +13,19 @@ import {
   Setting,
 } from './domain'
 import {
+  Activity,
   Connection,
+  DraftPhase,
   Message,
   type Model,
   PresetEditor,
   SendFrame,
   SendFrameTwice,
   SliderId,
+  Startup,
   Target,
+  WaitForConfirmation,
+  WaitForStartupFrames,
   WaitForThrottle,
   WaitToReconnect,
   sliderDomId,
@@ -42,6 +47,7 @@ const presets: ReadonlyArray<Preset> = [
 
 const base: Model = {
   connection: Connection.Connected(),
+  startup: Startup.Ready(),
   isBridgeOnline: true,
   lights: [
     {
@@ -62,6 +68,8 @@ const base: Model = {
   groupLevels: {},
   presets,
   drafts: [],
+  activities: [],
+  nextRequestId: 1,
   maybeExpanded: Option.none(),
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
@@ -73,6 +81,43 @@ const allLights = Target.Group({ name: 'All Lights' })
 const frameOf = (topic: string, payload: unknown) =>
   JSON.stringify({ topic, payload })
 
+const throttling = (setting: Setting, isDirty = false) => ({
+  target: orb,
+  setting,
+  phase: DraftPhase.Throttling({ isDirty }),
+  awaitingReports: ['Orb'],
+})
+
+const settingOrbOn: Model = {
+  ...base,
+  activities: [
+    {
+      requestId: 1,
+      target: orb,
+      activity: Activity.SettingPower({ power: 'ON' }),
+    },
+  ],
+}
+
+const reported = (name: string, power: 'ON' | 'OFF') =>
+  Message.ReceivedFrame({
+    frame: IncomingFrame.ReportedLightState({ name, state: state(power) }),
+  })
+
+const reportedBrightness = (name: string, brightness: number) =>
+  Message.ReceivedFrame({
+    frame: IncomingFrame.ReportedLightState({
+      name,
+      state: { ...state('ON'), brightness },
+    }),
+  })
+
+const settleTimedOut = (requestId: number) =>
+  Command.resolve(
+    WaitForConfirmation,
+    Message.CompletedWaitForConfirmation({ requestId }),
+  )
+
 const editorModel = (editing: Partial<PresetEditorEditing> = {}): Model => ({
   ...base,
   presetEditor: PresetEditor.Open({
@@ -83,6 +128,19 @@ const editorModel = (editing: Partial<PresetEditorEditing> = {}): Model => ({
       look: SavablePresetLook.White({ colorTemp: 300 }),
       ...editing,
     },
+    maybeFailure: Option.none(),
+  }),
+})
+const savingModel = (): Model => ({
+  ...base,
+  presetEditor: PresetEditor.Saving({
+    editing: {
+      maybeOriginalName: Option.none(),
+      name: 'Movie',
+      brightness: 90,
+      look: SavablePresetLook.White({ colorTemp: 300 }),
+    },
+    requestId: 1,
   }),
 })
 type PresetEditorEditing = Extract<
@@ -144,13 +202,7 @@ describe('connection', () => {
       update,
       given({
         ...base,
-        drafts: [
-          {
-            target: orb,
-            setting: Setting.Brightness({ value: 5 }),
-            isDirty: true,
-          },
-        ],
+        drafts: [throttling(Setting.Brightness({ value: 5 }), true)],
       }),
       message(Message.ClosedSocket()),
       model(next => {
@@ -202,10 +254,12 @@ describe('power', () => {
       update,
       given(base),
       message(Message.ClickedPower({ target: orb })),
-      Command.expectExact(
+      Command.expectHas(
         SendFrameTwice({ frame: frameOf('Orb/set', { state: 'ON' }) }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
     )
   })
 
@@ -214,12 +268,134 @@ describe('power', () => {
       update,
       given(base),
       message(Message.ClickedPower({ target: allLights })),
-      Command.expectExact(
+      Command.expectHas(
         SendFrameTwice({
           frame: frameOf('All Lights/set', { state: 'OFF' }),
         }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
+    )
+  })
+
+  test('the switch waits for the bulb instead of assuming', () => {
+    story(
+      update,
+      given(base),
+      message(Message.ClickedPower({ target: orb })),
+      model(next => {
+        expect(next.states['Orb']?.power).toBe('OFF')
+        expect(next.activities).toHaveLength(1)
+      }),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
+    )
+  })
+
+  test('the matching report ends the wait', () => {
+    story(
+      update,
+      given(settingOrbOn),
+      message(reported('Orb', 'ON')),
+      model(next => {
+        expect(next.activities).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('a second tap while waiting sends nothing', () => {
+    story(
+      update,
+      given(settingOrbOn),
+      message(Message.ClickedPower({ target: orb })),
+      Command.expectNone(),
+    )
+  })
+
+  test('an unrelated report does not end the wait', () => {
+    story(
+      update,
+      given(settingOrbOn),
+      message(reported('Shroom', 'ON')),
+      model(next => {
+        expect(next.activities).toHaveLength(1)
+      }),
+    )
+  })
+
+  test('a report of the old state does not end the wait', () => {
+    story(
+      update,
+      given(settingOrbOn),
+      message(reported('Orb', 'OFF')),
+      model(next => {
+        expect(next.activities).toHaveLength(1)
+      }),
+    )
+  })
+
+  test('a bulb that never answers shows no response, then clears', () => {
+    story(
+      update,
+      given(base),
+      message(Message.ClickedPower({ target: orb })),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      model(next => {
+        expect(next.activities[0]?.activity._tag).toBe('NoResponse')
+      }),
+      settleTimedOut(2),
+      model(next => {
+        expect(next.activities).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('a stale timer leaves a newer request alone', () => {
+    story(
+      update,
+      given({
+        ...base,
+        activities: [
+          {
+            requestId: 7,
+            target: orb,
+            activity: Activity.SettingPower({ power: 'ON' }),
+          },
+        ],
+      }),
+      message(Message.CompletedWaitForConfirmation({ requestId: 3 })),
+      model(next => {
+        expect(next.activities[0]?.activity._tag).toBe('SettingPower')
+      }),
+    )
+  })
+
+  test('losing the socket ends every wait', () => {
+    story(
+      update,
+      given(settingOrbOn),
+      message(Message.ClosedSocket()),
+      model(next => {
+        expect(next.activities).toHaveLength(0)
+      }),
+      Command.resolve(WaitToReconnect, Message.CompletedWaitToReconnect()),
+    )
+  })
+
+  test('nothing is sent while disconnected', () => {
+    story(
+      update,
+      given({
+        ...base,
+        connection: Connection.WaitingToReconnect({ attempt: 0 }),
+      }),
+      message(Message.ClickedPower({ target: orb })),
+      Command.expectNone(),
+      message(Message.ClickedPreset({ target: allLights, preset: 'Red' })),
+      Command.expectNone(),
     )
   })
 })
@@ -327,6 +503,7 @@ describe('group brightness level', () => {
           kind: 'Brightness',
         }),
       ),
+      settleTimedOut(1),
       reported('Shroom', lit(40)),
       reported('Lamp', lit(40)),
       expectLevel(allLights, 40),
@@ -344,7 +521,8 @@ describe('group brightness level', () => {
           {
             target: allLights,
             setting: Setting.Brightness({ value: 40 }),
-            isDirty: true,
+            phase: DraftPhase.Throttling({ isDirty: true }),
+            awaitingReports: ['Orb', 'Shroom', 'Lamp'],
           },
         ],
         groupLevels: { 'All Lights': 40, Bedroom: 100 },
@@ -415,6 +593,7 @@ describe('slider drag', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       model(next => {
         expect(Option.isSome(next.maybeActiveSlider)).toBe(true)
       }),
@@ -430,13 +609,7 @@ describe('slider drag', () => {
       update,
       given({
         ...base,
-        drafts: [
-          {
-            target: orb,
-            setting: Setting.Brightness({ value: 50 }),
-            isDirty: false,
-          },
-        ],
+        drafts: [throttling(Setting.Brightness({ value: 50 }))],
         maybeActiveSlider: Option.some({ sliderId, slider: draggingSlider }),
       }),
       message(fromActiveSlider(Slider.Message.MovedDragPointer({ value: 60 }))),
@@ -454,6 +627,7 @@ describe('slider drag', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       model(next => {
         expect(next.drafts).toHaveLength(0)
       }),
@@ -474,6 +648,7 @@ describe('slider drag', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       message(fromActiveSlider(Slider.Message.ReleasedDragPointer())),
       model(next => {
         expect(Option.isNone(next.maybeActiveSlider)).toBe(true)
@@ -489,7 +664,7 @@ describe('slider throttle', () => {
 
   const holding: Model = {
     ...base,
-    drafts: [{ target: orb, setting: brightness(10), isDirty: false }],
+    drafts: [throttling(brightness(10))],
   }
 
   test('sends the first value and opens a throttle window', () => {
@@ -506,6 +681,7 @@ describe('slider throttle', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       model(next => {
         expect(next.drafts).toHaveLength(0)
       }),
@@ -531,6 +707,7 @@ describe('slider throttle', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       model(next => {
         expect(next.drafts).toHaveLength(0)
       }),
@@ -547,6 +724,7 @@ describe('slider throttle', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
       message(
         Message.UpdatedSetting({
           target: orb,
@@ -561,56 +739,288 @@ describe('slider throttle', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'ColorTemp' }),
       ),
+      settleTimedOut(2),
+    )
+  })
+
+  test('the slider holds its value after the last send', () => {
+    story(
+      update,
+      given(holding),
+      message(
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      model(next => {
+        expect(next.drafts[0]?.phase._tag).toBe('Settling')
+      }),
+      Command.expectExact(WaitForConfirmation({ requestId: 1, delayMs: 1500 })),
+      settleTimedOut(1),
+      model(next => {
+        expect(next.drafts).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('the next report releases a settling slider', () => {
+    story(
+      update,
+      given({
+        ...base,
+        drafts: [
+          {
+            target: orb,
+            setting: brightness(10),
+            phase: DraftPhase.Settling({ requestId: 4 }),
+            awaitingReports: ['Orb'],
+          },
+        ],
+      }),
+      message(reportedBrightness('Orb', 10)),
+      model(next => {
+        expect(next.drafts).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('a late report of an earlier position does not release the slider', () => {
+    story(
+      update,
+      given({
+        ...base,
+        drafts: [
+          {
+            target: orb,
+            setting: brightness(10),
+            phase: DraftPhase.Settling({ requestId: 4 }),
+            awaitingReports: ['Orb'],
+          },
+        ],
+      }),
+      message(reportedBrightness('Orb', 60)),
+      model(next => {
+        expect(next.drafts).toHaveLength(1)
+      }),
+    )
+  })
+
+  test('a report that landed during the window releases the slider at once', () => {
+    story(
+      update,
+      given(holding),
+      message(reportedBrightness('Orb', 10)),
+      message(
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      Command.expectNone(),
+      model(next => {
+        expect(next.drafts).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('a group draft waits for every member', () => {
+    const groupDraft = {
+      target: allLights,
+      setting: brightness(10),
+      phase: DraftPhase.Settling({ requestId: 4 }),
+      awaitingReports: ['Orb', 'Shroom'],
+    }
+    story(
+      update,
+      given({ ...base, drafts: [groupDraft] }),
+      message(reportedBrightness('Orb', 10)),
+      model(next => {
+        expect(next.drafts).toHaveLength(1)
+      }),
+      message(reportedBrightness('Shroom', 10)),
+      model(next => {
+        expect(next.drafts).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('dragging again while settling sends straight away', () => {
+    story(
+      update,
+      given({
+        ...base,
+        drafts: [
+          {
+            target: orb,
+            setting: brightness(10),
+            phase: DraftPhase.Settling({ requestId: 4 }),
+            awaitingReports: ['Orb'],
+          },
+        ],
+      }),
+      message(Message.UpdatedSetting({ target: orb, setting: brightness(40) })),
+      Command.expectHas(
+        SendFrame({ frame: frameOf('Orb/set', { brightness: 40 }) }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      settleTimedOut(1),
+    )
+  })
+})
+
+describe('startup', () => {
+  const loading: Model = {
+    ...base,
+    startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
+    lights: [],
+    groups: [],
+    presets: [],
+    states: {},
+  }
+
+  test('becomes ready once every first frame has landed', () => {
+    story(
+      update,
+      given(loading),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedLights({ lights: base.lights }),
+        }),
+      ),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedGroups({ groups: base.groups }),
+        }),
+      ),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedPresets({ presets }),
+        }),
+      ),
+      message(reported('Orb', 'ON')),
+      model(next => {
+        expect(next.startup._tag).toBe('Loading')
+      }),
+      message(reported('Shroom', 'ON')),
+      model(next => {
+        expect(next.startup._tag).toBe('Ready')
+      }),
+    )
+  })
+
+  test('stops waiting if a frame never comes', () => {
+    story(
+      update,
+      given({
+        ...loading,
+        connection: Connection.Connecting({ attempt: 0 }),
+      }),
+      message(Message.AcquiredSocket()),
+      Command.expectExact(WaitForStartupFrames()),
+      Command.resolve(
+        WaitForStartupFrames,
+        Message.CompletedWaitForStartupFrames(),
+      ),
+      model(next => {
+        expect(next.startup._tag).toBe('Ready')
+      }),
+    )
+  })
+
+  test('reconnecting keeps the loaded page', () => {
+    story(
+      update,
+      given({ ...base, connection: Connection.Connecting({ attempt: 1 }) }),
+      message(Message.AcquiredSocket()),
+      Command.expectNone(),
+      model(next => {
+        expect(next.startup._tag).toBe('Ready')
+      }),
     )
   })
 })
 
 describe('presets', () => {
-  test('applying names the group', () => {
+  test('applying names the group and waits for a report', () => {
     story(
       update,
       given(base),
-      message(
-        Message.ClickedPreset({
-          target: Target.Group({ name: 'Rest of the House' }),
-          preset: 'Red',
-        }),
-      ),
-      Command.expectExact(
+      message(Message.ClickedPreset({ target: allLights, preset: 'Red' })),
+      Command.expectHas(
         SendFrame({
           frame: frameOf('preset/set', {
             name: 'Red',
-            group: 'Rest of the House',
+            group: 'All Lights',
           }),
         }),
       ),
+      model(next => {
+        expect(next.activities[0]?.activity._tag).toBe('ApplyingPreset')
+      }),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
     )
   })
 
-  test('applying to a bulb names the light', () => {
+  test('applying to a bulb names the light and waits for it', () => {
     story(
       update,
       given(base),
       message(Message.ClickedPreset({ target: orb, preset: 'Red' })),
-      Command.expectExact(
+      Command.expectHas(
         SendFrame({
           frame: frameOf('preset/set', { name: 'Red', light: 'Orb' }),
         }),
       ),
+      model(next => {
+        expect(next.activities[0]?.activity._tag).toBe('ApplyingPreset')
+      }),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
     )
   })
 
-  test('saving a new preset sends its look and closes the editor', () => {
+  test('a report from any member ends the preset wait', () => {
+    story(
+      update,
+      given({
+        ...base,
+        activities: [
+          {
+            requestId: 1,
+            target: allLights,
+            activity: Activity.ApplyingPreset({ preset: 'Red' }),
+          },
+        ],
+      }),
+      message(reported('Orb', 'ON')),
+      model(next => {
+        expect(next.activities).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('an unanswered preset quietly stops waiting', () => {
+    story(
+      update,
+      given(base),
+      message(Message.ClickedPreset({ target: allLights, preset: 'Red' })),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      model(next => {
+        expect(next.activities).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('saving a new preset sends it and stays open', () => {
     story(
       update,
       given(editorModel()),
       message(Message.SubmittedEditor()),
       model(next => {
-        expect(next.presetEditor._tag).toBe('Closed')
+        expect(next.presetEditor._tag).toBe('Saving')
       }),
-      Command.expectExact(
+      Command.expectHas(
         SendFrame({
           frame: frameOf('preset/save', {
             name: 'Movie',
@@ -620,6 +1030,68 @@ describe('presets', () => {
         }),
       ),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+    )
+  })
+
+  test('the list closes the editor once the preset is in it', () => {
+    story(
+      update,
+      given(savingModel()),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedPresets({ presets }),
+        }),
+      ),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Saving')
+      }),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedPresets({
+            presets: [
+              ...presets,
+              {
+                name: 'Movie',
+                brightness: 90,
+                look: PresetLook.White({ colorTemp: 300 }),
+              },
+            ],
+          }),
+        }),
+      ),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Closed')
+      }),
+    )
+  })
+
+  test('a save that is never confirmed reopens with the failure', () => {
+    story(
+      update,
+      given(editorModel()),
+      message(Message.SubmittedEditor()),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Open')
+        if (next.presetEditor._tag === 'Open') {
+          expect(Option.isSome(next.presetEditor.maybeFailure)).toBe(true)
+          expect(next.presetEditor.editing.name).toBe('Movie')
+        }
+      }),
+    )
+  })
+
+  test('losing the socket mid-save keeps the edits', () => {
+    story(
+      update,
+      given(savingModel()),
+      message(Message.ClosedSocket()),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Open')
+      }),
+      Command.resolve(WaitToReconnect, Message.CompletedWaitToReconnect()),
     )
   })
 
@@ -634,7 +1106,7 @@ describe('presets', () => {
         }),
       ),
       message(Message.SubmittedEditor()),
-      Command.expectExact(
+      Command.expectHas(
         SendFrame({
           frame: frameOf('preset/save', {
             name: 'Crimson',
@@ -645,6 +1117,19 @@ describe('presets', () => {
         }),
       ),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+    )
+  })
+
+  test('edits are ignored while a save is in flight', () => {
+    story(
+      update,
+      given(savingModel()),
+      message(Message.UpdatedEditorName({ value: 'Changed' })),
+      message(Message.ClickedCancelEditor()),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Saving')
+      }),
     )
   })
 
@@ -664,15 +1149,61 @@ describe('presets', () => {
     )
   })
 
-  test('deleting sends the original name', () => {
+  test('deleting sends the original name and stays open', () => {
     story(
       update,
       given(editorModel({ maybeOriginalName: Option.some('Red') })),
       message(Message.ClickedDeletePreset()),
-      Command.expectExact(
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Deleting')
+      }),
+      Command.expectHas(
         SendFrame({ frame: frameOf('preset/delete', { name: 'Red' }) }),
       ),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+    )
+  })
+
+  test('the list closes the editor once the preset is gone', () => {
+    story(
+      update,
+      given({
+        ...base,
+        presetEditor: PresetEditor.Deleting({
+          editing: {
+            maybeOriginalName: Option.some('Red'),
+            name: 'Red',
+            brightness: 90,
+            look: SavablePresetLook.Color({ hex: '#FF0000' }),
+          },
+          requestId: 1,
+        }),
+      }),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedPresets({ presets }),
+        }),
+      ),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Deleting')
+      }),
+      message(
+        Message.ReceivedFrame({
+          frame: IncomingFrame.ReportedPresets({
+            presets: [
+              {
+                name: 'Rainbow',
+                brightness: 254,
+                look: PresetLook.Rainbow(),
+              },
+            ],
+          }),
+        }),
+      ),
+      model(next => {
+        expect(next.presetEditor._tag).toBe('Closed')
+      }),
     )
   })
 

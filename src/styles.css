@@ -134,6 +134,33 @@
   --ring: oklch(0.86 0.13 85 / 70%);
 }
 
+@property --glow {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --level {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+@keyframes pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -168,4 +195,36 @@
   box-shadow:
     var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000),
     var(--tw-shadow);
+}
+
+@utility glow-transition {
+  transition:
+    --glow 250ms ease-out,
+    --level 250ms ease-out;
+}
+
+/* Reveals after a delay so anything that resolves quickly never flashes. */
+@utility delayed-reveal {
+  animation: reveal 150ms ease-out 200ms both;
+}
+
+@utility pending-spinner {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: var(--spinner-inset, 5px);
+    border: 2px solid var(--spinner-track, rgb(0 0 0 / 0.15));
+    border-top-color: var(--spinner-arc, rgb(0 0 0 / 0.7));
+    border-radius: 9999px;
+    animation:
+      pending-spin 700ms linear infinite,
+      reveal 150ms ease-out 200ms both;
+  }
+}
+
+@utility pending-spinner-around {
+  --spinner-inset: -4px;
+  --spinner-track: transparent;
+  --spinner-arc: var(--foreground);
 }

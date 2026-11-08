@@ -19,7 +19,9 @@ import {
   PresetEditor,
   SendFrame,
   SendFrameTwice,
+  Startup,
   Target,
+  WaitForConfirmation,
   WaitForThrottle,
   update,
 } from './main'
@@ -39,8 +41,15 @@ const on = {
   maybeHueSaturation: Option.some({ hue: 32, saturation: 82 }),
 }
 
+const settleTimedOut = (requestId: number) =>
+  Command.resolve(
+    WaitForConfirmation,
+    Message.CompletedWaitForConfirmation({ requestId }),
+  )
+
 const loaded: Model = {
   connection: Connection.Connected(),
+  startup: Startup.Ready(),
   isBridgeOnline: true,
   lights: [light('Living Room Orb', 'a'), light('Bedroom UFO', 'b')],
   groups: [
@@ -61,6 +70,8 @@ const loaded: Model = {
     { name: 'Rainbow', brightness: 254, look: PresetLook.Rainbow() },
   ],
   drafts: [],
+  activities: [],
+  nextRequestId: 1,
   maybeExpanded: Option.none(),
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
@@ -89,9 +100,75 @@ describe('view', () => {
       given({
         ...loaded,
         lights: [],
+        startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
         connection: Connection.Connecting({ attempt: 0 }),
       }),
       expect(text('Connecting to your lights…')).toExist(),
+      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
+    )
+  })
+
+  test('says so when the bridge stays unreachable', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
+        connection: Connection.WaitingToReconnect({ attempt: 3 }),
+      }),
+      expect(text("Can't reach Zigbee2MQTT")).toExist(),
+    )
+  })
+
+  test('explains an empty network instead of spinning', () => {
+    scene(
+      { update, view },
+      given({ ...loaded, lights: [], groups: [] }),
+      expect(text('No lights found')).toExist(),
+    )
+  })
+
+  test('keeps the page while reconnecting, without live controls', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        connection: Connection.WaitingToReconnect({ attempt: 0 }),
+      }),
+      expect(role('status')).toHaveText('Reconnecting…'),
+      expect(text('Living Room Orb')).toExist(),
+    )
+  })
+
+  test('marks a bulb busy while its power change is confirmed', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      click(role('switch', { name: 'Bedroom UFO power' })),
+      expect(role('article', { name: 'Bedroom UFO' })).toHaveAttr(
+        'aria-busy',
+        'true',
+      ),
+      expect(role('switch', { name: 'Bedroom UFO power' })).toHaveAttr(
+        'aria-checked',
+        'false',
+      ),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      expect(text('No response')).toExist(),
+      settleTimedOut(2),
+      expect(text('No response')).not.toExist(),
+    )
+  })
+
+  test('a light that never reported is not shown as off', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        states: { 'Living Room Orb': on },
+      }),
+      expect(text('Not reporting')).toExist(),
     )
   })
 
@@ -133,7 +210,7 @@ describe('view', () => {
       expect(role('button', { name: 'Red on Bedroom UFO' })).not.toExist(),
       click(role('button', { name: 'Bedroom UFO color' })),
       click(role('button', { name: 'Rainbow on Bedroom UFO' })),
-      Command.expectExact(
+      Command.expectHas(
         SendFrame({
           frame: JSON.stringify({
             topic: 'preset/set',
@@ -142,6 +219,7 @@ describe('view', () => {
         }),
       ),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
     )
   })
 
@@ -179,7 +257,7 @@ describe('view', () => {
       { update, view },
       given(loaded),
       click(role('switch', { name: 'Bedroom UFO power' })),
-      Command.expectExact(
+      Command.expectHas(
         SendFrameTwice({
           frame: JSON.stringify({
             topic: 'Bedroom UFO/set',
@@ -188,6 +266,8 @@ describe('view', () => {
         }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
     )
   })
 
@@ -197,6 +277,8 @@ describe('view', () => {
       given(loaded),
       click(role('switch', { name: 'All Lights power' })),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
     )
   })
 
@@ -223,6 +305,7 @@ describe('view', () => {
         WaitForThrottle,
         Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
       ),
+      settleTimedOut(1),
     )
   })
 
@@ -252,6 +335,21 @@ describe('view', () => {
       click(role('button', { name: 'New preset' })),
       expect(text('Give the preset a name.')).toExist(),
       expect(role('button', { name: 'Save' })).toBeDisabled(),
+    )
+  })
+
+  test('saving shows progress and locks the editor', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      click(role('button', { name: 'Edit Red' })),
+      click(role('button', { name: 'Save' })),
+      expect(role('button', { name: 'Saving…' })).toBeDisabled(),
+      expect(role('button', { name: 'Cancel' })).toBeDisabled(),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      expect(text("Didn't hear back from Zigbee2MQTT. Try again.")).toExist(),
+      expect(role('button', { name: 'Save' })).not.toBeDisabled(),
     )
   })
 })

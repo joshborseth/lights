@@ -33,7 +33,7 @@ import {
   LightState,
   MAX_BRIGHTNESS,
   MIN_BRIGHTNESS,
-  type Power,
+  Power,
   Preset,
   PresetLook,
   SavablePresetLook,
@@ -56,6 +56,13 @@ const SETTING_THROTTLE_MS = 400
 const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
 const SLIDER_STEP = 1
+const DRAFT_SETTLE_TIMEOUT_MS = 1500
+const POWER_CONFIRM_TIMEOUT_MS = 5000
+const PRESET_APPLY_TIMEOUT_MS = 5000
+const PRESET_SAVE_TIMEOUT_MS = 5000
+const NO_RESPONSE_NOTICE_MS = 4000
+const STARTUP_FRAMES_TIMEOUT_MS = 3000
+const STRUGGLING_CONNECTION_ATTEMPTS = 3
 export const PRESET_COLOR_TEMP_RANGE: ColorTempRange = { min: 153, max: 555 }
 
 // MODEL
@@ -79,12 +86,42 @@ export type Target = typeof Target.Type
 export const SettingKind = Schema.Literals(['Brightness', 'ColorTemp', 'Color'])
 export type SettingKind = typeof SettingKind.Type
 
+export const DraftPhase = defineTaggedUnion({
+  Throttling: { isDirty: Schema.Boolean },
+  Settling: { requestId: Schema.Number },
+})
+export type DraftPhase = typeof DraftPhase.Type
+
 const Draft = Schema.Struct({
   target: Target,
   setting: Setting,
-  isDirty: Schema.Boolean,
+  phase: DraftPhase,
+  awaitingReports: Schema.Array(Schema.String),
 })
 type Draft = typeof Draft.Type
+
+export const Activity = defineTaggedUnion({
+  SettingPower: { power: Power },
+  ApplyingPreset: { preset: Schema.String },
+  NoResponse: {},
+})
+export type Activity = typeof Activity.Type
+
+const TargetActivity = Schema.Struct({
+  requestId: Schema.Number,
+  target: Target,
+  activity: Activity,
+})
+type TargetActivity = typeof TargetActivity.Type
+
+export const InitialFrame = Schema.Literals(['Lights', 'Groups', 'Presets'])
+export type InitialFrame = typeof InitialFrame.Type
+
+export const Startup = defineTaggedUnion({
+  Loading: { missing: Schema.Array(InitialFrame) },
+  Ready: {},
+})
+export type Startup = typeof Startup.Type
 
 export const SliderId = defineTaggedUnion({
   TargetBrightness: { target: Target },
@@ -109,12 +146,15 @@ export type EditingPreset = typeof EditingPreset.Type
 
 export const PresetEditor = defineTaggedUnion({
   Closed: {},
-  Open: { editing: EditingPreset },
+  Open: { editing: EditingPreset, maybeFailure: Schema.Option(Schema.String) },
+  Saving: { editing: EditingPreset, requestId: Schema.Number },
+  Deleting: { editing: EditingPreset, requestId: Schema.Number },
 })
 export type PresetEditor = typeof PresetEditor.Type
 
 export const Model = Schema.Struct({
   connection: Connection,
+  startup: Startup,
   isBridgeOnline: Schema.Boolean,
   lights: Schema.Array(Light),
   groups: Schema.Array(Group),
@@ -122,6 +162,8 @@ export const Model = Schema.Struct({
   groupLevels: Schema.Record(Schema.String, Schema.Number),
   presets: Schema.Array(Preset),
   drafts: Schema.Array(Draft),
+  activities: Schema.Array(TargetActivity),
+  nextRequestId: Schema.Number,
   maybeExpanded: Schema.Option(Target),
   maybeActiveSlider: Schema.Option(ActiveSlider),
   presetEditor: PresetEditor,
@@ -142,6 +184,8 @@ export const Message = defineMessageUnion({
   ClickedExpand: { target: Target },
   UpdatedSetting: { target: Target, setting: Setting },
   CompletedThrottleWait: { target: Target, kind: SettingKind },
+  CompletedWaitForConfirmation: { requestId: Schema.Number },
+  CompletedWaitForStartupFrames: {},
   GotSliderMessage: { sliderId: SliderId, message: Slider.Message },
   GotActiveSliderMessage: { message: Slider.Message },
   ClickedPreset: { target: Target, preset: Schema.String },
@@ -160,6 +204,7 @@ export type Message = typeof Message.Type
 // DERIVED
 
 export type TargetStatus = Readonly<{
+  hasReported: boolean
   isOn: boolean
   brightness: number
   maybeColorTemp: Option.Option<number>
@@ -183,6 +228,7 @@ const statusOf = (
     Array.map(lights, light => light.maybeColorTempRange),
   )
   return {
+    hasReported: Array.isReadonlyArrayNonEmpty(states),
     isOn: Array.isArrayNonEmpty(onStates),
     brightness: Array.reduce(shownStates, 1, (highest, state) =>
       Math.max(highest, state.brightness),
@@ -253,6 +299,9 @@ const settingKindOf = (setting: Setting): SettingKind => setting._tag
 const isSameTarget = (first: Target, second: Target): boolean =>
   first._tag === second._tag && first.name === second.name
 
+const isActivityFor = (target: Target) => (entry: TargetActivity) =>
+  isSameTarget(entry.target, target)
+
 const isDraftFor = (target: Target, kind: SettingKind) => (draft: Draft) =>
   isSameTarget(draft.target, target) && draft.setting._tag === kind
 
@@ -264,6 +313,26 @@ export const draftSetting = (
   Option.map(
     Array.findFirst(model.drafts, isDraftFor(target, kind)),
     draft => draft.setting,
+  )
+
+export const canControl = (model: Model): boolean =>
+  model.connection._tag === 'Connected' && model.isBridgeOnline
+
+export const isStrugglingToConnect = (connection: Connection): boolean =>
+  Connection.match(connection, {
+    Connecting: ({ attempt }) => attempt >= STRUGGLING_CONNECTION_ATTEMPTS,
+    WaitingToReconnect: ({ attempt }) =>
+      attempt >= STRUGGLING_CONNECTION_ATTEMPTS,
+    Connected: () => false,
+  })
+
+export const activityOf = (
+  model: Model,
+  target: Target,
+): Option.Option<Activity> =>
+  Option.map(
+    Array.findFirst(model.activities, isActivityFor(target)),
+    entry => entry.activity,
   )
 
 export const isExpanded = (model: Model, target: Target): boolean =>
@@ -358,6 +427,8 @@ const startReconnectWait = (model: Model): UpdateReturn => {
     model: modifyFields(model, {
       connection: () => Connection.WaitingToReconnect({ attempt }),
       drafts: () => [],
+      activities: () => [],
+      presetEditor: editor => failedEditor(editor, CONNECTION_LOST_FAILURE),
     }),
     commands: [WaitToReconnect({ delayMs: reconnectDelayMs(attempt) })],
   }
@@ -411,40 +482,254 @@ const withSettledGroupLevels = (model: Model): Model =>
       ),
   })
 
-const applyFrame = (model: Model, frame: IncomingFrame): UpdateReturn =>
-  IncomingFrame.match<UpdateReturn>(frame, {
-    ReportedLights: ({ lights }) => ({
-      model: withSettledGroupLevels(
-        modifyFields(model, { lights: () => lights }),
+const CONNECTION_LOST_FAILURE =
+  'Lost the connection before that finished. Try again.'
+const NO_CONFIRMATION_FAILURE = "Didn't hear back from Zigbee2MQTT. Try again."
+
+const failedEditor = (editor: PresetEditor, failure: string): PresetEditor =>
+  PresetEditor.match(editor, {
+    Closed: () => editor,
+    Open: () => editor,
+    Saving: ({ editing }) =>
+      PresetEditor.Open({ editing, maybeFailure: Option.some(failure) }),
+    Deleting: ({ editing }) =>
+      PresetEditor.Open({ editing, maybeFailure: Option.some(failure) }),
+  })
+
+const isReportFrom = (model: Model, target: Target, name: string): boolean =>
+  target.name === name ||
+  Array.some(lightsOfTarget(model, target), light => light.name === name)
+
+const isActivityConfirmed =
+  (model: Model, name: string) =>
+  (entry: TargetActivity): boolean =>
+    Activity.match(entry.activity, {
+      SettingPower: ({ power }) =>
+        isReportFrom(model, entry.target, name) &&
+        targetStatus(model, entry.target).isOn === (power === 'ON'),
+      ApplyingPreset: () => isReportFrom(model, entry.target, name),
+      NoResponse: () => isReportFrom(model, entry.target, name),
+    })
+
+const withoutConfirmedActivities = (model: Model, name: string): Model =>
+  modifyFields(model, {
+    activities: activities =>
+      Array.filter(
+        activities,
+        entry => !isActivityConfirmed(model, name)(entry),
       ),
-    }),
-    ReportedGroups: ({ groups }) => ({
-      model: withSettledGroupLevels(
-        modifyFields(model, { groups: () => groups }),
+  })
+
+const isSettled = (draft: Draft): boolean =>
+  draft.phase._tag === 'Settling' &&
+  Array.isReadonlyArrayEmpty(draft.awaitingReports)
+
+const reportMatchesSetting = (state: LightState, setting: Setting): boolean =>
+  Setting.match(setting, {
+    Brightness: ({ value }) => state.brightness === value,
+    ColorTemp: ({ value }) => Option.contains(state.maybeColorTemp, value),
+    Color: () => true,
+  })
+
+// NOTE: A draft holds until every bulb it was sent to reports the value it was
+// last sent, so neither the value from before the drag nor a late report of an
+// earlier position can pull the slider backward. Color has no exact match,
+// because bulbs report it back as hue and saturation. The settle timeout caps
+// the wait, after which whatever the bulb last reported wins.
+const withReportCounted = (
+  model: Model,
+  name: string,
+  state: LightState,
+): Model =>
+  modifyFields(model, {
+    drafts: drafts =>
+      Array.filter(
+        Array.map(drafts, draft =>
+          reportMatchesSetting(state, draft.setting)
+            ? modifyFields(draft, {
+                awaitingReports: names =>
+                  Array.filter(names, candidate => candidate !== name),
+              })
+            : draft,
+        ),
+        draft => !isSettled(draft),
       ),
+  })
+
+const withLightState = (model: Model, name: string, state: LightState): Model =>
+  pipe(
+    modifyFields(model, {
+      states: states => Record.set(states, name, state),
     }),
-    ReportedLightState: ({ name, state }) => ({
-      model: withSettledGroupLevels(
+    next => withoutConfirmedActivities(next, name),
+    next => withReportCounted(next, name, state),
+  )
+
+const isConfirmedByPresets = (
+  editor: PresetEditor,
+  presets: ReadonlyArray<Preset>,
+): boolean => {
+  const isNamed = (name: string) =>
+    Array.some(presets, preset => preset.name === name)
+  return PresetEditor.match(editor, {
+    Closed: () => false,
+    Open: () => false,
+    Saving: ({ editing }) => isNamed(String.trim(editing.name)),
+    Deleting: ({ editing }) =>
+      Option.exists(editing.maybeOriginalName, name => !isNamed(name)),
+  })
+}
+
+const withReceived = (model: Model, received: InitialFrame): Model =>
+  modifyFields(model, {
+    startup: startup =>
+      Startup.match(startup, {
+        Loading: ({ missing }) =>
+          Startup.Loading({
+            missing: Array.filter(missing, frame => frame !== received),
+          }),
+        Ready: () => startup,
+      }),
+  })
+
+const applyFrame = (model: Model, frame: IncomingFrame): Model =>
+  IncomingFrame.match(frame, {
+    ReportedLights: ({ lights }) =>
+      withReceived(
+        withSettledGroupLevels(modifyFields(model, { lights: () => lights })),
+        'Lights',
+      ),
+    ReportedGroups: ({ groups }) =>
+      withReceived(
+        withSettledGroupLevels(modifyFields(model, { groups: () => groups })),
+        'Groups',
+      ),
+    ReportedLightState: ({ name, state }) =>
+      withSettledGroupLevels(withLightState(model, name, state)),
+    ReportedBridge: ({ isOnline }) =>
+      modifyFields(model, { isBridgeOnline: () => isOnline }),
+    ReportedPresets: ({ presets }) =>
+      withReceived(
         modifyFields(model, {
-          states: states => Record.set(states, name, state),
+          presets: () => presets,
+          presetEditor: editor =>
+            isConfirmedByPresets(editor, presets)
+              ? PresetEditor.Closed()
+              : editor,
         }),
+        'Presets',
       ),
-    }),
-    ReportedBridge: ({ isOnline }) => ({
-      model: modifyFields(model, { isBridgeOnline: () => isOnline }),
-    }),
-    ReportedPresets: ({ presets }) => ({
-      model: modifyFields(model, { presets: () => presets }),
-    }),
-    Unreadable: ({ topic }) => ({
-      model: modifyFields(model, {
+    Unreadable: ({ topic }) =>
+      modifyFields(model, {
         maybeProblem: () =>
           Option.some(
             `Zigbee2MQTT sent a ${topic} update this app can't read.`,
           ),
       }),
-    }),
   })
+
+const hasEveryInitialFrame = (
+  model: Model,
+  missing: ReadonlyArray<InitialFrame>,
+) =>
+  Array.isReadonlyArrayEmpty(missing) &&
+  Array.every(model.lights, light => Record.has(model.states, light.name))
+
+// NOTE: Zigbee2MQTT sends everything in one burst on connect. Holding the
+// first paint until the burst lands stops the page assembling itself piece by
+// piece, with every bulb briefly shown as off.
+const withStartupSettled = (model: Model): Model =>
+  Startup.match(model.startup, {
+    Loading: ({ missing }) =>
+      hasEveryInitialFrame(model, missing)
+        ? modifyFields(model, { startup: () => Startup.Ready() })
+        : model,
+    Ready: () => model,
+  })
+
+const expiredDrafts = (model: Model, requestId: number): Model =>
+  modifyFields(model, {
+    drafts: drafts =>
+      Array.filter(
+        drafts,
+        draft =>
+          !(
+            draft.phase._tag === 'Settling' &&
+            draft.phase.requestId === requestId
+          ),
+      ),
+  })
+
+const expiredEditor = (model: Model, requestId: number): Model => {
+  const expireIfRequested = (candidateId: number): PresetEditor =>
+    candidateId === requestId
+      ? failedEditor(model.presetEditor, NO_CONFIRMATION_FAILURE)
+      : model.presetEditor
+  return modifyFields(model, {
+    presetEditor: editor =>
+      PresetEditor.match(editor, {
+        Closed: () => editor,
+        Open: () => editor,
+        Saving: ({ requestId: candidateId }) => expireIfRequested(candidateId),
+        Deleting: ({ requestId: candidateId }) =>
+          expireIfRequested(candidateId),
+      }),
+  })
+}
+
+const withoutActivity = (model: Model, requestId: number): Model =>
+  modifyFields(model, {
+    activities: activities =>
+      Array.filter(activities, entry => entry.requestId !== requestId),
+  })
+
+const expiredConfirmation = (model: Model, requestId: number): UpdateReturn => {
+  const expired = expiredEditor(expiredDrafts(model, requestId), requestId)
+  return Option.match(
+    Array.findFirst(expired.activities, entry => entry.requestId === requestId),
+    {
+      onNone: () => ({ model: expired }),
+      onSome: entry =>
+        Activity.match<UpdateReturn>(entry.activity, {
+          SettingPower: () =>
+            startActivity(
+              expired,
+              entry.target,
+              Activity.NoResponse(),
+              NO_RESPONSE_NOTICE_MS,
+              [],
+            ),
+          ApplyingPreset: () => ({
+            model: withoutActivity(expired, requestId),
+          }),
+          NoResponse: () => ({ model: withoutActivity(expired, requestId) }),
+        }),
+    },
+  )
+}
+
+const startActivity = (
+  model: Model,
+  target: Target,
+  activity: Activity,
+  timeoutMs: number,
+  sendCommands: UpdateReturn['commands'],
+): UpdateReturn => ({
+  model: modifyFields(model, {
+    activities: activities => [
+      ...Array.filter(activities, entry => !isActivityFor(target)(entry)),
+      { requestId: model.nextRequestId, target, activity },
+    ],
+    nextRequestId: id => id + 1,
+  }),
+  commands: [
+    ...(sendCommands ?? []),
+    WaitForConfirmation({
+      requestId: model.nextRequestId,
+      delayMs: timeoutMs,
+    }),
+  ],
+})
 
 const settingCommands = (target: Target, setting: Setting) => [
   SendFrame({ frame: settingFrame(target.name, setting) }),
@@ -478,7 +763,10 @@ const modifyEditing = (
     presetEditor: editor =>
       PresetEditor.match(editor, {
         Closed: () => editor,
-        Open: ({ editing }) => PresetEditor.Open({ editing: modify(editing) }),
+        Open: ({ editing, maybeFailure }) =>
+          PresetEditor.Open({ editing: modify(editing), maybeFailure }),
+        Saving: () => editor,
+        Deleting: () => editor,
       }),
   }),
 })
@@ -495,31 +783,88 @@ const withEditedGroupLevel = (
     ? Record.set(levels, target.name, setting.value)
     : levels
 
+export const isEditorBusy = (editor: PresetEditor): boolean =>
+  editor._tag === 'Saving' || editor._tag === 'Deleting'
+
+const startEditorRequest = (
+  model: Model,
+  editor: PresetEditor,
+  frame: string,
+): UpdateReturn => ({
+  model: modifyFields(model, {
+    presetEditor: () => editor,
+    nextRequestId: id => id + 1,
+  }),
+  commands: [
+    SendFrame({ frame }),
+    WaitForConfirmation({
+      requestId: model.nextRequestId,
+      delayMs: PRESET_SAVE_TIMEOUT_MS,
+    }),
+  ],
+})
+
+const awaitingReportsFor = (
+  model: Model,
+  target: Target,
+): ReadonlyArray<string> =>
+  Array.map(lightsOfTarget(model, target), light => light.name)
+
+const throttlingDraft = (
+  model: Model,
+  target: Target,
+  setting: Setting,
+): Draft => ({
+  target,
+  setting,
+  phase: DraftPhase.Throttling({ isDirty: false }),
+  awaitingReports: awaitingReportsFor(model, target),
+})
+
 const updatedSetting = (
   model: Model,
   target: Target,
   setting: Setting,
 ): UpdateReturn => {
+  if (model.connection._tag !== 'Connected') {
+    return { model }
+  }
   const isThisDraft = isDraftFor(target, settingKindOf(setting))
   const groupLevels = () =>
     withEditedGroupLevel(model.groupLevels, target, setting)
+  const replacedDrafts = (draft: Draft) =>
+    Array.map(model.drafts, candidate =>
+      isThisDraft(candidate) ? draft : candidate,
+    )
+  const sentImmediately = (drafts: ReadonlyArray<Draft>): UpdateReturn => ({
+    model: modifyFields(model, { drafts: () => drafts, groupLevels }),
+    commands: settingCommands(target, setting),
+  })
   return Option.match(Array.findFirst(model.drafts, isThisDraft), {
-    onNone: () => ({
-      model: modifyFields(model, {
-        drafts: drafts => [...drafts, { target, setting, isDirty: false }],
-        groupLevels,
-      }),
-      commands: settingCommands(target, setting),
-    }),
-    onSome: () => ({
-      model: modifyFields(model, {
-        drafts: drafts =>
-          Array.map(drafts, draft =>
-            isThisDraft(draft) ? { target, setting, isDirty: true } : draft,
+    onNone: () =>
+      sentImmediately([
+        ...model.drafts,
+        throttlingDraft(model, target, setting),
+      ]),
+    onSome: draft =>
+      DraftPhase.match<UpdateReturn>(draft.phase, {
+        Throttling: () => ({
+          model: modifyFields(model, {
+            drafts: () =>
+              replacedDrafts(
+                modifyFields(draft, {
+                  setting: () => setting,
+                  phase: () => DraftPhase.Throttling({ isDirty: true }),
+                }),
+              ),
+            groupLevels,
+          }),
+        }),
+        Settling: () =>
+          sentImmediately(
+            replacedDrafts(throttlingDraft(model, target, setting)),
           ),
-        groupLevels,
       }),
-    }),
   })
 }
 
@@ -574,6 +919,10 @@ export const update = (model: Model, message: Message) =>
         connection: () => Connection.Connected(),
         maybeProblem: () => Option.none(),
       }),
+      commands: Startup.match(model.startup, {
+        Loading: () => [WaitForStartupFrames()],
+        Ready: () => [],
+      }),
     }),
 
     ReleasedSocket: () => ({ model }),
@@ -598,14 +947,33 @@ export const update = (model: Model, message: Message) =>
         Match.orElse(() => ({ model })),
       ),
 
-    ReceivedFrame: ({ frame }) => applyFrame(model, frame),
+    ReceivedFrame: ({ frame }) => ({
+      model: withStartupSettled(applyFrame(model, frame)),
+    }),
+
+    CompletedWaitForStartupFrames: () => ({
+      model: modifyFields(model, { startup: () => Startup.Ready() }),
+    }),
+
+    CompletedWaitForConfirmation: ({ requestId }) =>
+      expiredConfirmation(model, requestId),
 
     ClickedPower: ({ target }) => {
-      const power: Power = targetStatus(model, target).isOn ? 'OFF' : 'ON'
-      return {
-        model,
-        commands: [SendFrameTwice({ frame: powerFrame(target.name, power) })],
+      const isAlreadySetting = Option.exists(
+        activityOf(model, target),
+        activity => activity._tag === 'SettingPower',
+      )
+      if (isAlreadySetting || model.connection._tag !== 'Connected') {
+        return { model }
       }
+      const power: Power = targetStatus(model, target).isOn ? 'OFF' : 'ON'
+      return startActivity(
+        model,
+        target,
+        Activity.SettingPower({ power }),
+        POWER_CONFIRM_TIMEOUT_MS,
+        [SendFrameTwice({ frame: powerFrame(target.name, power) })],
+      )
     },
 
     ClickedExpand: ({ target }) => ({
@@ -629,65 +997,112 @@ export const update = (model: Model, message: Message) =>
 
     CompletedThrottleWait: ({ target, kind }) => {
       const isThisDraft = isDraftFor(target, kind)
+      const replacingDraft =
+        (replacement: Draft) => (drafts: ReadonlyArray<Draft>) =>
+          Array.map(drafts, candidate =>
+            isThisDraft(candidate) ? replacement : candidate,
+          )
       return Option.match(Array.findFirst(model.drafts, isThisDraft), {
         onNone: () => ({ model }),
-        onSome: draft =>
-          draft.isDirty
-            ? {
-                model: modifyFields(model, {
-                  drafts: drafts =>
-                    Array.map(drafts, candidate =>
-                      isThisDraft(candidate)
-                        ? { ...candidate, isDirty: false }
-                        : candidate,
-                    ),
+        onSome: draft => {
+          if (draft.phase._tag === 'Settling') {
+            return { model }
+          }
+          if (draft.phase.isDirty) {
+            return {
+              model: modifyFields(model, {
+                drafts: replacingDraft(
+                  throttlingDraft(model, target, draft.setting),
+                ),
+              }),
+              commands: settingCommands(target, draft.setting),
+            }
+          }
+          if (Array.isReadonlyArrayEmpty(draft.awaitingReports)) {
+            return {
+              model: modifyFields(model, {
+                drafts: drafts =>
+                  Array.filter(drafts, candidate => !isThisDraft(candidate)),
+              }),
+            }
+          }
+          return {
+            model: modifyFields(model, {
+              drafts: replacingDraft(
+                modifyFields(draft, {
+                  phase: () =>
+                    DraftPhase.Settling({ requestId: model.nextRequestId }),
                 }),
-                commands: settingCommands(target, draft.setting),
-              }
-            : {
-                model: modifyFields(model, {
-                  drafts: drafts =>
-                    Array.filter(drafts, candidate => !isThisDraft(candidate)),
-                }),
-              },
+              ),
+              nextRequestId: id => id + 1,
+            }),
+            commands: [
+              WaitForConfirmation({
+                requestId: model.nextRequestId,
+                delayMs: DRAFT_SETTLE_TIMEOUT_MS,
+              }),
+            ],
+          }
+        },
       })
     },
 
-    ClickedPreset: ({ target, preset }) => ({
-      model,
-      commands: [
-        SendFrame({
-          frame: Target.match(target, {
-            Light: ({ name }) => applyLightPresetFrame(name, preset),
-            Group: ({ name }) => applyPresetFrame(name, preset),
+    ClickedPreset: ({ target, preset }) => {
+      const isAlreadyApplying = Option.exists(
+        activityOf(model, target),
+        activity =>
+          activity._tag === 'ApplyingPreset' && activity.preset === preset,
+      )
+      if (isAlreadyApplying || model.connection._tag !== 'Connected') {
+        return { model }
+      }
+      return startActivity(
+        model,
+        target,
+        Activity.ApplyingPreset({ preset }),
+        PRESET_APPLY_TIMEOUT_MS,
+        [
+          SendFrame({
+            frame: Target.match(target, {
+              Light: ({ name }) => applyLightPresetFrame(name, preset),
+              Group: ({ name }) => applyPresetFrame(name, preset),
+            }),
           }),
-        }),
-      ],
-    }),
+        ],
+      )
+    },
 
-    ClickedNewPreset: () => ({
-      model: modifyFields(model, {
-        presetEditor: () =>
-          PresetEditor.Open({
-            editing: {
-              maybeOriginalName: Option.none(),
-              name: '',
-              brightness: MAX_BRIGHTNESS,
-              look: SavablePresetLook.White({ colorTemp: DEFAULT_COLOR_TEMP }),
-            },
-          }),
-      }),
-    }),
+    ClickedNewPreset: () =>
+      isEditorBusy(model.presetEditor)
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              presetEditor: () =>
+                PresetEditor.Open({
+                  editing: {
+                    maybeOriginalName: Option.none(),
+                    name: '',
+                    brightness: MAX_BRIGHTNESS,
+                    look: SavablePresetLook.White({
+                      colorTemp: DEFAULT_COLOR_TEMP,
+                    }),
+                  },
+                  maybeFailure: Option.none(),
+                }),
+            }),
+          },
 
     ClickedEditPreset: ({ preset }) =>
       pipe(
         Array.findFirst(model.presets, candidate => candidate.name === preset),
         Option.flatMap(editorFromPreset),
+        Option.filter(() => !isEditorBusy(model.presetEditor)),
         Option.match({
           onNone: () => ({ model }),
           onSome: editing => ({
             model: modifyFields(model, {
-              presetEditor: () => PresetEditor.Open({ editing }),
+              presetEditor: () =>
+                PresetEditor.Open({ editing, maybeFailure: Option.none() }),
             }),
           }),
         }),
@@ -703,39 +1118,54 @@ export const update = (model: Model, message: Message) =>
         modifyFields(editing, { look: () => look }),
       ),
 
-    ClickedCancelEditor: () => ({ model: closedEditor(model) }),
+    ClickedCancelEditor: () =>
+      isEditorBusy(model.presetEditor)
+        ? { model }
+        : { model: closedEditor(model) },
 
     SubmittedEditor: () =>
       PresetEditor.match<UpdateReturn>(model.presetEditor, {
         Closed: () => ({ model }),
+        Saving: () => ({ model }),
+        Deleting: () => ({ model }),
         Open: ({ editing }) =>
-          Option.isSome(presetEditorProblem(model, editing))
+          Option.isSome(presetEditorProblem(model, editing)) ||
+          model.connection._tag !== 'Connected'
             ? { model }
-            : {
-                model: closedEditor(model),
-                commands: [
-                  SendFrame({
-                    frame: savePresetFrame(
-                      editing.maybeOriginalName,
-                      String.trim(editing.name),
-                      editing.brightness,
-                      editing.look,
-                    ),
-                  }),
-                ],
-              },
+            : startEditorRequest(
+                model,
+                PresetEditor.Saving({
+                  editing,
+                  requestId: model.nextRequestId,
+                }),
+                savePresetFrame(
+                  editing.maybeOriginalName,
+                  String.trim(editing.name),
+                  editing.brightness,
+                  editing.look,
+                ),
+              ),
       }),
 
     ClickedDeletePreset: () =>
       PresetEditor.match<UpdateReturn>(model.presetEditor, {
         Closed: () => ({ model }),
+        Saving: () => ({ model }),
+        Deleting: () => ({ model }),
         Open: ({ editing }) =>
           Option.match(editing.maybeOriginalName, {
             onNone: () => ({ model: closedEditor(model) }),
-            onSome: name => ({
-              model: closedEditor(model),
-              commands: [SendFrame({ frame: deletePresetFrame(name) })],
-            }),
+            onSome: name =>
+              model.connection._tag === 'Connected'
+                ? startEditorRequest(
+                    model,
+                    PresetEditor.Deleting({
+                      editing,
+                      requestId: model.nextRequestId,
+                    }),
+                    deletePresetFrame(name),
+                  )
+                : { model },
           }),
       }),
 
@@ -744,6 +1174,8 @@ export const update = (model: Model, message: Message) =>
     FailedSendFrame: ({ error }) => ({
       model: modifyFields(model, {
         maybeProblem: () => Option.some(`Couldn't send that: ${error}`),
+        activities: () => [],
+        presetEditor: editor => failedEditor(editor, CONNECTION_LOST_FAILURE),
       }),
     }),
   })
@@ -753,6 +1185,7 @@ export const update = (model: Model, message: Message) =>
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: {
     connection: Connection.Connecting({ attempt: 0 }),
+    startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
     isBridgeOnline: true,
     lights: [],
     groups: [],
@@ -760,6 +1193,8 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     groupLevels: {},
     presets: [],
     drafts: [],
+    activities: [],
+    nextRequestId: 0,
     maybeExpanded: Option.none(),
     maybeActiveSlider: Option.none(),
     presetEditor: PresetEditor.Closed(),
@@ -813,6 +1248,22 @@ export const WaitForThrottle = Command.define('WaitForThrottle', {
     Effect.sleep(Duration.millis(SETTING_THROTTLE_MS)).pipe(
       Effect.as(Message.CompletedThrottleWait({ target, kind })),
     ),
+})
+
+export const WaitForConfirmation = Command.define('WaitForConfirmation', {
+  args: { requestId: Schema.Number, delayMs: Schema.Number },
+  messages: [Message.CompletedWaitForConfirmation],
+  execute: ({ requestId, delayMs }) =>
+    Effect.sleep(Duration.millis(delayMs)).pipe(
+      Effect.as(Message.CompletedWaitForConfirmation({ requestId })),
+    ),
+})
+
+export const WaitForStartupFrames = Command.define('WaitForStartupFrames', {
+  messages: [Message.CompletedWaitForStartupFrames],
+  execute: Effect.sleep(Duration.millis(STARTUP_FRAMES_TIMEOUT_MS)).pipe(
+    Effect.as(Message.CompletedWaitForStartupFrames()),
+  ),
 })
 
 export const WaitToReconnect = Command.define('WaitToReconnect', {

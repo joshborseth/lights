@@ -3,8 +3,10 @@ import {
   Command,
   click,
   expect,
+  expectIgnored,
   given,
   keydown,
+  pointerDown,
   role,
   scene,
   text,
@@ -20,6 +22,7 @@ import {
   Connection,
   Message,
   type Model,
+  PageScroll,
   PresetEditor,
   SendFrame,
   SendFrameTwice,
@@ -82,6 +85,7 @@ const loaded: Model = {
   maybeExpanded: Option.none(),
   openGroups: ['Bedroom'],
   maybeActiveSlider: Option.none(),
+  pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
 }
@@ -326,6 +330,74 @@ describe('view', () => {
       ),
       settleTimedOut(1),
     )
+  })
+
+  describe('touching a slider', () => {
+    const orbSlider = role('slider', { name: 'Living Room Orb brightness' })
+    const touch = {
+      pointerType: 'touch',
+      pointerId: 7,
+      clientX: 100,
+      clientY: 300,
+    }
+    const viewWithSliderProbe: typeof view = (model, h) => {
+      const page = view(model, h)
+      return {
+        ...page,
+        body: h.div(
+          [],
+          [
+            page.body,
+            h.p(
+              [],
+              [
+                Option.isSome(model.maybeActiveSlider)
+                  ? 'gesture started'
+                  : 'no gesture',
+              ],
+            ),
+          ],
+        ),
+      }
+    }
+
+    test('a finger press leaves the light alone', () => {
+      scene(
+        { update, view },
+        given(loaded),
+        pointerDown(orbSlider, touch),
+        Command.expectNone(),
+        expect(orbSlider).toHaveAttr('aria-valuenow', '120'),
+      )
+    })
+
+    test('a touch while the page is still starts a gesture', () => {
+      scene(
+        { update, view: viewWithSliderProbe },
+        given(loaded),
+        pointerDown(orbSlider, touch),
+        expect(text('gesture started')).toExist(),
+      )
+    })
+
+    test('a touch while the page is scrolling is ignored', () => {
+      scene(
+        { update, view: viewWithSliderProbe },
+        given({ ...loaded, pageScroll: PageScroll.Moving() }),
+        pointerDown(orbSlider, touch),
+        expectIgnored(),
+        Command.expectNone(),
+        expect(text('no gesture')).toExist(),
+      )
+    })
+
+    test('the slider leaves vertical panning to the browser', () => {
+      scene(
+        { update, view },
+        given(loaded),
+        expect(orbSlider).toHaveStyle('touch-action', 'pan-y'),
+      )
+    })
   })
 
   test('reveals color controls on request', () => {

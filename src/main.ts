@@ -57,6 +57,7 @@ const CONNECTION_TIMEOUT_MS = 5000
 const MAX_RECONNECT_DELAY_MS = 30_000
 const BASE_RECONNECT_DELAY_MS = 500
 const SETTING_THROTTLE_MS = 400
+const PAGE_SCROLL_SETTLE_MS = 300
 const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
 const AUTOMATIONS_REFRESH_MS = 5000
@@ -138,6 +139,12 @@ export const SliderId = defineTaggedUnion({
 })
 export type SliderId = typeof SliderId.Type
 
+export const PageScroll = defineTaggedUnion({
+  Still: {},
+  Moving: {},
+})
+export type PageScroll = typeof PageScroll.Type
+
 const ActiveSlider = Schema.Struct({
   sliderId: SliderId,
   slider: Slider.Model,
@@ -182,6 +189,7 @@ export const Model = Schema.Struct({
   maybeExpanded: Schema.Option(Target),
   openGroups: Schema.Array(Schema.String),
   maybeActiveSlider: Schema.Option(ActiveSlider),
+  pageScroll: PageScroll,
   presetEditor: PresetEditor,
   maybeProblem: Schema.Option(Schema.String),
 })
@@ -208,6 +216,8 @@ export const Message = defineMessageUnion({
   CompletedWaitForStartupFrames: {},
   GotSliderMessage: { sliderId: SliderId, message: Slider.Message },
   GotActiveSliderMessage: { message: Slider.Message },
+  StartedPageScroll: {},
+  SettledPageScroll: {},
   ClickedPreset: { target: Target, preset: Schema.String },
   ClickedNewPreset: {},
   ClickedEditPreset: { preset: Schema.String },
@@ -967,7 +977,7 @@ const foldSliderMessage = (sliderId: SliderId) =>
     write: (model: Model, nextSlider: Slider.Model) =>
       modifyFields(model, {
         maybeActiveSlider: () =>
-          nextSlider.dragState._tag === 'Dragging'
+          Slider.isInteracting(nextSlider)
             ? Option.some({ sliderId, slider: nextSlider })
             : Option.none(),
       }),
@@ -1091,6 +1101,14 @@ export const update = (model: Model, message: Message) =>
         onNone: () => ({ model }),
         onSome: ({ sliderId }) => foldSliderMessage(sliderId)(model, message),
       }),
+
+    StartedPageScroll: () => ({
+      model: modifyFields(model, { pageScroll: () => PageScroll.Moving() }),
+    }),
+
+    SettledPageScroll: () => ({
+      model: modifyFields(model, { pageScroll: () => PageScroll.Still() }),
+    }),
 
     CompletedThrottleWait: ({ target, kind }) => {
       const isThisDraft = isDraftFor(target, kind)
@@ -1298,6 +1316,7 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     maybeExpanded: Option.none(),
     openGroups: [],
     maybeActiveSlider: Option.none(),
+    pageScroll: PageScroll.Still(),
     presetEditor: PresetEditor.Closed(),
     maybeProblem: Option.none(),
   },
@@ -1491,6 +1510,29 @@ const streamResumes: Stream.Stream<typeof Message.ResumedApp.Type> =
     ),
   )
 
+const streamPageScrollEvents: Stream.Stream<unknown> = Stream.fromEventListener(
+  window,
+  'scroll',
+  { passive: true },
+)
+
+export const streamPageScrollStart: Stream.Stream<Message> =
+  streamPageScrollEvents.pipe(
+    Stream.take(1),
+    Stream.map(() => Message.StartedPageScroll()),
+  )
+
+// NOTE: The leading element starts the quiet period right away. A scroll that
+// fired only one event would otherwise never settle.
+export const streamPageScrollSettle: Stream.Stream<Message> = Stream.concat(
+  Stream.make(undefined),
+  streamPageScrollEvents,
+).pipe(
+  Stream.debounce(Duration.millis(PAGE_SCROLL_SETTLE_MS)),
+  Stream.take(1),
+  Stream.map(() => Message.SettledPageScroll()),
+)
+
 const socketSubscriptions = Subscription.make<
   Model,
   Message,
@@ -1501,6 +1543,16 @@ const socketSubscriptions = Subscription.make<
     {
       modelToDependencies: () => ({}),
       dependenciesToStream: () => streamResumes,
+    },
+  ),
+  pageScroll: entry(
+    { isMoving: Schema.Boolean },
+    {
+      modelToDependencies: model => ({
+        isMoving: model.pageScroll._tag === 'Moving',
+      }),
+      dependenciesToStream: ({ isMoving }) =>
+        isMoving ? streamPageScrollSettle : streamPageScrollStart,
     },
   ),
   automationsRefresh: entry(

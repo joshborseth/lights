@@ -16,7 +16,14 @@ import { Tabs } from '@foldkit/ui'
 
 import { DEFAULT_CONFIG, type Snapshot, WatcherMode } from './automation'
 import * as Automations from './automations'
-import { Connection, type Model, PresetEditor, Startup, update } from './main'
+import {
+  Connection,
+  type Model,
+  PageScroll,
+  PresetEditor,
+  Startup,
+  update,
+} from './main'
 import { view } from './view'
 
 const snapshot: Snapshot = {
@@ -85,6 +92,7 @@ const base: Model = {
   maybeExpanded: Option.none(),
   openGroups: [],
   maybeActiveSlider: Option.none(),
+  pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
 }

@@ -20,6 +20,7 @@ import {
   DraftPhase,
   Message,
   type Model,
+  PageScroll,
   PresetEditor,
   SendFrame,
   SendFrameTwice,
@@ -78,6 +79,7 @@ const base: Model = {
   maybeExpanded: Option.none(),
   openGroups: [],
   maybeActiveSlider: Option.none(),
+  pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
 }
@@ -692,6 +694,85 @@ describe('slider drag', () => {
     )
   })
 
+  describe('by touch', () => {
+    const pressedByTouch = fromSlider(
+      Slider.Message.PressedTouch({
+        pointerId: 7,
+        along: 100,
+        across: 300,
+        originValue: 200,
+      }),
+    )
+    const fingerAt = (along: number, across: number) =>
+      fromActiveSlider(
+        Slider.Message.MovedTouch({
+          pointerId: 7,
+          along,
+          across,
+          valuePerPixel: 1,
+        }),
+      )
+
+    test('a press sends nothing', () => {
+      story(
+        update,
+        given(base),
+        message(pressedByTouch),
+        Command.expectNone(),
+        model(next => {
+          expect(Option.isSome(next.maybeActiveSlider)).toBe(true)
+        }),
+      )
+    })
+
+    test('a vertical swipe sends nothing and ends the gesture', () => {
+      story(
+        update,
+        given(base),
+        message(pressedByTouch),
+        message(fingerAt(102, 340)),
+        Command.expectNone(),
+        message(fingerAt(160, 340)),
+        Command.expectNone(),
+      )
+    })
+
+    test('a sideways drag sends the distance dragged from the current value', () => {
+      story(
+        update,
+        given(base),
+        message(pressedByTouch),
+        message(fingerAt(112, 301)),
+        Command.expectNone(),
+        message(fingerAt(92, 301)),
+        Command.expectHas(
+          SendFrame({ frame: frameOf('Orb/set', { brightness: 180 }) }),
+        ),
+        Command.resolve(SendFrame, Message.SucceededSendFrame()),
+        Command.resolve(
+          WaitForThrottle,
+          Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+        ),
+        settleTimedOut(1),
+      )
+    })
+
+    test('a browser takeover ends the gesture and sends nothing', () => {
+      story(
+        update,
+        given(base),
+        message(pressedByTouch),
+        message(
+          fromActiveSlider(Slider.Message.ReleasedTouch({ pointerId: 7 })),
+        ),
+        Command.expectNone(),
+        model(next => {
+          expect(Option.isNone(next.maybeActiveSlider)).toBe(true)
+        }),
+      )
+    })
+  })
+
   test('releasing ends the drag and ignores later pointer moves', () => {
     story(
       update,
@@ -713,6 +794,23 @@ describe('slider drag', () => {
       }),
       message(fromActiveSlider(Slider.Message.MovedDragPointer({ value: 90 }))),
       Command.expectNone(),
+    )
+  })
+})
+
+describe('page scroll', () => {
+  test('tracks whether the page is moving', () => {
+    story(
+      update,
+      given(base),
+      message(Message.StartedPageScroll()),
+      model(next => {
+        expect(next.pageScroll).toEqual(PageScroll.Moving())
+      }),
+      message(Message.SettledPageScroll()),
+      model(next => {
+        expect(next.pageScroll).toEqual(PageScroll.Still())
+      }),
     )
   })
 })

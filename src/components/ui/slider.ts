@@ -1,6 +1,10 @@
 import { Effect, Equal, Match as M, Option, Schema as S, Stream, pipe } from 'effect'
 import { Slider as FoldkitSlider } from '@foldkit/ui'
+import { Update } from 'foldkit'
 import { childAttributes, type Html, type HtmlBuilder } from 'foldkit/html'
+import { defineMessageUnion } from 'foldkit/message'
+import { defineTaggedUnion } from 'foldkit/schema'
+import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 import * as Subscription from 'foldkit/subscription'
 
@@ -11,13 +15,71 @@ import { cn } from '@/lib/utils'
  * multi-thumb; foldcn renders one thumb). Vertical orientation and
  * edge-aligned thumb/range geometry are owned by this module's view until
  * foldkit/ui gains parity (see foldcn issue tracker).
+ *
+ * Local gap vs upstream: a press from a finger or pen changes nothing. The
+ * browser keeps scrolling along the cross axis, and the value only follows a
+ * pointer that has clearly moved along the track. A mouse keeps upstream's
+ * press-to-set behavior.
  */
 
-export const init = FoldkitSlider.init
-export const update = FoldkitSlider.update
-export const Model = FoldkitSlider.Model
+const TouchGesture = defineTaggedUnion({
+  Idle: {},
+  Deciding: {
+    pointerId: S.Number,
+    startAlong: S.Number,
+    startAcross: S.Number,
+    originValue: S.Number,
+  },
+  Sliding: {
+    pointerId: S.Number,
+    startAlong: S.Number,
+    originValue: S.Number,
+  },
+})
+type TouchGesture = typeof TouchGesture.Type
+
+export const Model = S.Struct({
+  ...FoldkitSlider.Model.fields,
+  touchGesture: TouchGesture,
+})
 export type Model = typeof Model.Type
-export const Message = FoldkitSlider.Message
+
+export const init = (config: InitConfig): Model => ({
+  ...FoldkitSlider.init(config),
+  touchGesture: TouchGesture.Idle(),
+})
+
+export const Message = defineMessageUnion({
+  PressedThumb: { originValue: S.Number },
+  PressedPointer: { value: S.Number, originValue: S.Number },
+  MovedDragPointer: { value: S.Number },
+  ReleasedDragPointer: {},
+  CancelledDrag: {},
+  PressedKeyboardNavigation: {
+    direction: S.Literals([
+      'StepDecrement',
+      'StepIncrement',
+      'PageDecrement',
+      'PageIncrement',
+      'Min',
+      'Max',
+    ]),
+    value: S.Number,
+  },
+  PressedTouch: {
+    pointerId: S.Number,
+    along: S.Number,
+    across: S.Number,
+    originValue: S.Number,
+  },
+  MovedTouch: {
+    pointerId: S.Number,
+    along: S.Number,
+    across: S.Number,
+    valuePerPixel: S.Number,
+  },
+  ReleasedTouch: { pointerId: S.Number },
+})
 export type Message = typeof Message.Type
 export const OutMessage = FoldkitSlider.OutMessage
 export type OutMessage = typeof OutMessage.Type
@@ -31,7 +93,7 @@ export type SliderAttributes = FoldkitSlider.SliderAttributes
 
 /** Upstream SliderPrimitive.Control string. */
 export const sliderRootClass =
-  'data-horizontal:h-6 data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
+  'data-horizontal:h-6 data-vertical:min-h-40 relative flex w-full data-horizontal:touch-pan-y data-vertical:touch-pan-x items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
 
 /** A slim track. The `after:` layer stretches its pointer target to 44px tall. */
 export const sliderTrackClass =
@@ -58,6 +120,8 @@ export const sliderHeaderClass = 'flex items-center justify-between'
 const LEFT_MOUSE_BUTTON = 0
 const THUMB_SIZE_PX = 24
 const THUMB_SIZE = `${String(THUMB_SIZE_PX)}px`
+const TOUCH_SLOP_PX = 8
+const TOUCH_SIDEWAYS_RATIO = 1.5
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max)
@@ -111,6 +175,105 @@ export const valueFromPointer = (
   return min + fraction * (max - min)
 }
 
+type UpdateReturn = Update.ReturnWithOutMessage<Model, Message, OutMessage>
+
+const upstreamUpdate = (model: Model, message: FoldkitSlider.Message): UpdateReturn => {
+  const upstream = FoldkitSlider.update(model, message)
+  return Update.withOutMessage(
+    { model: modifyFields(model, { dragState: () => upstream.model.dragState }) },
+    upstream.outMessage,
+  )
+}
+
+const isTrackedTouch = (gesture: TouchGesture, pointerId: number): boolean =>
+  gesture._tag !== 'Idle' && gesture.pointerId === pointerId
+
+const decidedTouchGesture = (
+  deciding: typeof TouchGesture.Deciding.Type,
+  along: number,
+  across: number,
+): TouchGesture => {
+  const alongDistance = Math.abs(along - deciding.startAlong)
+  const acrossDistance = Math.abs(across - deciding.startAcross)
+  if (Math.max(alongDistance, acrossDistance) < TOUCH_SLOP_PX) {
+    return deciding
+  }
+  return alongDistance >= acrossDistance * TOUCH_SIDEWAYS_RATIO
+    ? TouchGesture.Sliding({
+        pointerId: deciding.pointerId,
+        startAlong: along,
+        originValue: deciding.originValue,
+      })
+    : TouchGesture.Idle()
+}
+
+export const update = (model: Model, message: Message): UpdateReturn =>
+  M.value(message).pipe(
+    M.withReturnType<UpdateReturn>(),
+    M.tag('PressedTouch', ({ pointerId, along, across, originValue }) =>
+      model.touchGesture._tag === 'Idle'
+        ? {
+            model: modifyFields(model, {
+              touchGesture: () =>
+                TouchGesture.Deciding({
+                  pointerId,
+                  startAlong: along,
+                  startAcross: across,
+                  originValue,
+                }),
+            }),
+          }
+        : { model },
+    ),
+    M.tag('MovedTouch', ({ pointerId, along, across, valuePerPixel }) => {
+      if (!isTrackedTouch(model.touchGesture, pointerId)) {
+        return { model }
+      }
+      return TouchGesture.match<UpdateReturn>(model.touchGesture, {
+        Idle: () => ({ model }),
+        Deciding: (deciding) => ({
+          model: modifyFields(model, {
+            touchGesture: () => decidedTouchGesture(deciding, along, across),
+          }),
+        }),
+        Sliding: ({ startAlong, originValue }) => ({
+          model,
+          outMessage: OutMessage.ChangedValue({
+            value: snapAndClamp(
+              originValue + (along - startAlong) * valuePerPixel,
+              model.min,
+              model.max,
+              model.step,
+            ),
+          }),
+        }),
+      })
+    }),
+    M.tag('ReleasedTouch', ({ pointerId }) =>
+      isTrackedTouch(model.touchGesture, pointerId)
+        ? { model: modifyFields(model, { touchGesture: () => TouchGesture.Idle() }) }
+        : { model },
+    ),
+    M.orElse((upstreamMessage) => upstreamUpdate(model, upstreamMessage)),
+  )
+
+/** Whether this slider is mid-gesture and must stay in the parent's Model. */
+export const isInteracting = (model: Model): boolean =>
+  model.dragState._tag === 'Dragging' || model.touchGesture._tag !== 'Idle'
+
+const touchAxes = (
+  clientX: number,
+  clientY: number,
+  isVertical: boolean,
+): Readonly<{ along: number; across: number }> =>
+  isVertical ? { along: -clientY, across: clientX } : { along: clientX, across: clientY }
+
+const valuePerPixel = (track: Element, min: number, max: number): number => {
+  const rect = track.getBoundingClientRect()
+  const travel = isVerticalTrack(track) ? rect.height : rect.width - THUMB_SIZE_PX
+  return travel <= 0 ? 0 : (max - min) / travel
+}
+
 const DragActivity = S.Literals(['Idle', 'Active'])
 
 const dragActivityFromModel = (model: Model): 'Idle' | 'Active' =>
@@ -118,6 +281,15 @@ const dragActivityFromModel = (model: Model): 'Idle' | 'Active' =>
     M.withReturnType<'Idle' | 'Active'>(),
     M.tag('Dragging', (): 'Idle' | 'Active' => 'Active'),
     M.orElse((): 'Idle' | 'Active' => 'Idle'),
+  )
+
+const touchActivityFromModel = (model: Model): 'Idle' | 'Active' =>
+  model.touchGesture._tag === 'Idle' ? 'Idle' : 'Active'
+
+const streamTouchEnds = (type: 'pointerup' | 'pointercancel'): Stream.Stream<Message> =>
+  Stream.fromEventListener(document, type).pipe(
+    Stream.filter((event): event is PointerEvent => event instanceof PointerEvent),
+    Stream.map((event) => Message.ReleasedTouch({ pointerId: event.pointerId })),
   )
 
 /** Drag subscriptions that map pointer position along the track axis, including
@@ -189,6 +361,50 @@ export const subscriptionsForRoot = (getTrackRoot: () => Document | ShadowRoot) 
         },
       },
     ),
+    // NOTE: pointercancel is how the browser reports that this touch became a
+    // page scroll, so it ends the gesture without touching the value.
+    touchPointer: entry(
+      {
+        touchActivity: DragActivity,
+        id: S.String,
+        min: S.Number,
+        max: S.Number,
+      },
+      {
+        modelToDependencies: (model) => ({
+          touchActivity: touchActivityFromModel(model),
+          id: model.id,
+          min: model.min,
+          max: model.max,
+        }),
+        dependenciesToStream: ({ touchActivity, id, min, max }): Stream.Stream<Message> =>
+          // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: Stream.when widens the element type
+          Stream.when(
+            Stream.mergeAll(
+              [
+                Stream.fromEventListener(document, 'pointermove').pipe(
+                  Stream.filter((event): event is PointerEvent => event instanceof PointerEvent),
+                  Stream.map((event) =>
+                    Option.map(trackElement(id, getTrackRoot()), (element) =>
+                      Message.MovedTouch({
+                        pointerId: event.pointerId,
+                        ...touchAxes(event.clientX, event.clientY, isVerticalTrack(element)),
+                        valuePerPixel: valuePerPixel(element, min, max),
+                      }),
+                    ),
+                  ),
+                  Stream.filter(Option.isSome),
+                  Stream.map((option) => option.value),
+                ),
+                streamTouchEnds('pointerup'),
+                streamTouchEnds('pointercancel'),
+              ],
+              { concurrency: 'unbounded' },
+            ),
+            Effect.sync(() => touchActivity === 'Active'),
+          ) as Stream.Stream<Message>,
+      },
+    ),
     dragEscape: entry(
       { dragActivity: DragActivity },
       {
@@ -214,6 +430,9 @@ export const subscriptionsForRoot = (getTrackRoot: () => Document | ShadowRoot) 
 export const subscriptions = subscriptionsForRoot(() => document)
 
 type Orientation = 'horizontal' | 'vertical'
+
+const touchActionOf = (orientation: Orientation): string =>
+  orientation === 'vertical' ? 'pan-x' : 'pan-y'
 
 const filledTrackStyle = (
   orientation: Orientation,
@@ -255,7 +474,7 @@ const thumbStyle = (
       transform: 'translateX(-50%) translateY(-50%)',
       width: THUMB_SIZE,
       height: THUMB_SIZE,
-      'touch-action': 'none',
+      'touch-action': touchActionOf(orientation),
     }
   }
   // oxlint-disable-next-line anti-slop/no-known-value-widening -- SAFETY: style bag must be Record<string,string> for h.Style; literal evidence is intentionally widened to the style contract
@@ -264,7 +483,7 @@ const thumbStyle = (
     left: `calc((100% - ${THUMB_SIZE}) * ${fraction})`,
     width: THUMB_SIZE,
     height: THUMB_SIZE,
-    'touch-action': 'none',
+    'touch-action': touchActionOf(orientation),
   }
 }
 
@@ -278,6 +497,7 @@ export type ViewInputs = Readonly<{
   formatValue?: (value: number) => string
   isDisabled?: boolean
   isReadOnly?: boolean
+  ignoresTouch?: boolean
   name?: string
   getTrackRoot?: () => Document | ShadowRoot
 }>
@@ -290,12 +510,13 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
     formatValue,
     isDisabled = false,
     isReadOnly = false,
+    ignoresTouch = false,
     name,
     orientation = 'horizontal',
     getTrackRoot = () => document,
   } = viewInputs
   const { id, min, max } = model
-  const isDragging = model.dragState._tag === 'Dragging'
+  const isDragging = model.dragState._tag === 'Dragging' || model.touchGesture._tag === 'Sliding'
   const fraction = fractionOfValue(value, min, max)
   const isInteractive = !isDisabled && !isReadOnly
 
@@ -314,26 +535,61 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
       ),
     )
 
+  const pressedByTouch = (
+    clientX: number,
+    clientY: number,
+    pointerId: number,
+  ): Option.Option<Message> =>
+    ignoresTouch
+      ? Option.none()
+      : Option.some(
+          Message.PressedTouch({
+            pointerId,
+            ...touchAxes(clientX, clientY, orientation === 'vertical'),
+            originValue: value,
+          }),
+        )
+
   const trackPointerHandler = (
-    _pointerType: string,
+    pointerType: string,
     button: number,
     _screenX: number,
     _screenY: number,
     _timeStamp: number,
     clientX: number,
     clientY: number,
-  ) =>
+    pointerId: number,
+  ): Option.Option<Message> =>
     pipe(
       button,
       Option.liftPredicate(Equal.equals(LEFT_MOUSE_BUTTON)),
-      Option.flatMap(() => pointerAtPointer(clientX, clientY)),
+      Option.flatMap(
+        (): Option.Option<Message> =>
+          pointerType === 'mouse'
+            ? pointerAtPointer(clientX, clientY)
+            : pressedByTouch(clientX, clientY, pointerId),
+      ),
     )
 
-  const thumbPointerHandler = (_pointerType: string, button: number) =>
+  const thumbPointerHandler = (
+    pointerType: string,
+    button: number,
+    _screenX: number,
+    _screenY: number,
+    _timeStamp: number,
+    clientX: number,
+    clientY: number,
+    pointerId: number,
+  ): Option.Option<Message> =>
     pipe(
       button,
       Option.liftPredicate(Equal.equals(LEFT_MOUSE_BUTTON)),
-      Option.map(() => Message.PressedThumb({ originValue: value })),
+      Option.flatMap(
+        (): Option.Option<Message> =>
+          pointerType === 'mouse'
+            ? Option.some(Message.PressedThumb({ originValue: value }))
+            : pressedByTouch(clientX, clientY, pointerId),
+      ),
     )
 
   const stateAttributes = [
@@ -355,7 +611,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
     h.DataAttribute('slider-track-id', id),
     h.DataAttribute('orientation', orientation),
     h.DataAttribute(orientation, ''),
-    h.Style({ position: 'relative', 'touch-action': 'none' }),
+    h.Style({ position: 'relative', 'touch-action': touchActionOf(orientation) }),
     ...stateAttributes,
     ...trackInteractionAttributes,
   ]
@@ -421,6 +677,7 @@ export type StyledViewInputs = Readonly<{
   ariaLabelledBy?: string
   isDisabled?: boolean
   isReadOnly?: boolean
+  ignoresTouch?: boolean
   name?: string
   getTrackRoot?: () => Document | ShadowRoot
   rootClass?: string

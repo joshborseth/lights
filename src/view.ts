@@ -835,6 +835,7 @@ const sliderView = (
         value,
         ariaLabel: label,
         formatValue,
+        ignoresTouch: model.pageScroll._tag === 'Moving',
         ...classes,
       },
       h,

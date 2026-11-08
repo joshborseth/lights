@@ -47,6 +47,9 @@ const setup = () => {
     checkNow: Effect.void,
     pollOnce: Effect.void,
     waitForFlashToFinish: Effect.void,
+    withExclusiveLights: effect => effect,
+    recordInfo: () => Effect.void,
+    reportProblem: () => Effect.void,
     run: Effect.void,
   }
   const handle = makeHandler({

@@ -1,4 +1,4 @@
-import { Clock, Effect, Fiber, Option } from 'effect'
+import { Clock, Duration, Effect, Fiber, Option } from 'effect'
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,13 @@ import { makeAccountHealth, makeEngine } from './engine'
 import { MissingTokenError, makeGitHub } from './github'
 import { makeHandler } from './http'
 import { type LightsError, connectLights } from './mqtt'
+import { nudgeAddresses, observeNetwork } from './network'
+import {
+  PresenceConfigFile,
+  makePresenceWatcher,
+  readPresenceConfig,
+  turnOffAllLights,
+} from './presence'
 import { defaultPaths, loadInitial, makeStore, readMqttOptions } from './store'
 
 const DEFAULT_PORT = 8093
@@ -101,9 +108,30 @@ const program = Effect.gen(function* () {
   })
   log(`automations service listening on 127.0.0.1:${server.port}`)
 
+  const presenceFile = yield* readPresenceConfig(paths.presence)
+  const runPresence = PresenceConfigFile.match(presenceFile, {
+    Missing: () => Effect.sync(() => log('presence watching is not set up')),
+    Invalid: ({ problem }) =>
+      engine.reportProblem(`${paths.presence}: ${problem}`),
+    Ready: ({ config }) =>
+      makePresenceWatcher(config, {
+        nudge: nudgeAddresses,
+        observe: observeNetwork,
+        turnOffLights: engine.withExclusiveLights(turnOffAllLights(lights)),
+        now: Clock.currentTimeMillis,
+        sleep: ms => Effect.sleep(Duration.millis(ms)),
+        log: text => Effect.sync(() => log(text)),
+        recordInfo: engine.recordInfo,
+        reportProblem: engine.reportProblem,
+        errorText: (error: LightsError) => error.reason,
+      }).pipe(Effect.flatMap(presence => presence.run)),
+  })
+
   const watcher = yield* Effect.forkChild(engine.run)
+  const presenceWatcher = yield* Effect.forkChild(runPresence)
   yield* Fiber.join(stopRequested)
   log('stopping')
+  yield* Fiber.interrupt(presenceWatcher)
   yield* Fiber.interrupt(watcher)
   yield* engine.waitForFlashToFinish
   yield* lights.close

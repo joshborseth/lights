@@ -62,6 +62,25 @@ Browser  --- /automations ---> Tailscale Serve (tailnet only)
 - Writes must be JSON, which makes browsers preflight them. The service answers no preflights, so other sites cannot send commands.
 - A merge older than the catch-up window is recorded but never flashes, so downtime or a newly added account cannot replay old merges.
 
+#### Presence: all lights off when nobody is home
+
+`service/presence.ts` runs in the same service and is inert until `~/.config/pr-merge-lights/presence.json` exists. Restart the service after editing that file.
+
+```json
+{
+  "action": "LogOnly",
+  "gateway": "192.168.1.254",
+  "phones": [{ "name": "Josh", "mac": "aa:bb:cc:dd:ee:ff" }],
+  "probeSeconds": 30,
+  "awayMinutes": 15
+}
+```
+
+- **Detection:** the service sends a one-byte UDP packet to each phone, waits 10 seconds for the kernel to confirm the phone over ARP, then reads `ip neigh`. Phones are matched by Wi-Fi address, so a new IP does not matter. The router has no open API, so it is not used. Each phone needs Private Wi-Fi Address set to Fixed or Off for the home network.
+- **`action`:** `LogOnly` adds "Would have turned all lights off" to the activity log and sends no commands. `TurnOffLights` sends them.
+- **Safety:** it fires only after a phone has been seen home since the last firing, so a restart with nobody seen cannot turn the lights off. If the router stops answering, the away timers pause for the outage, so it cannot empty the house. The off sequence holds the flash lock, so a flash in progress cannot restore the lights afterward.
+- A phone's comings and goings go only to the service journal, not the activity log.
+
 Deploy with `scripts/deploy-automations.sh`. The Python watcher it replaced was deleted on 2026-11-08. The 9 PM all-off timer still runs `~/pr-merge-lights/lights_off.py`, so keep that folder.
 
 ## Rules for commands to the bulbs

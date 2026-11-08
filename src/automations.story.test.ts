@@ -17,6 +17,7 @@ import {
   RunAction,
   SaveDraft,
   SaveState,
+  Screen,
   init,
   update,
 } from './automations'
@@ -225,6 +226,97 @@ describe('Automations update', () => {
       update,
       given({ ...loaded, maybeDraft: Option.some(editedDraft) }),
       message(Message.ClickedDiscardDraft()),
+      model(current => {
+        expect(Option.isNone(current.maybeDraft)).toBe(true)
+      }),
+    )
+  })
+
+  test('leaving a screen closes what it had revealed, and keeps edits', () => {
+    story(
+      update,
+      given({
+        ...loaded,
+        screen: Screen.PrMerged({ maybeOpenSection: Option.some('Do') }),
+        revealed: ['FlashDetails'],
+        maybeDraft: Option.some(editedDraft),
+      }),
+      message(Message.SelectedScreen({ screen: Screen.List() })),
+      model(current => {
+        expect(current.screen).toEqual(Screen.List())
+        expect(current.revealed).toEqual([])
+        expect(current.maybeDraft).toEqual(Option.some(editedDraft))
+      }),
+    )
+  })
+
+  test('switching sections on a screen keeps what it has revealed', () => {
+    story(
+      update,
+      given({
+        ...loaded,
+        screen: Screen.PrMerged({ maybeOpenSection: Option.some('Do') }),
+        revealed: ['AllActivity'],
+      }),
+      message(
+        Message.SelectedScreen({
+          screen: Screen.PrMerged({ maybeOpenSection: Option.some('When') }),
+        }),
+      ),
+      model(current => {
+        expect(current.revealed).toEqual(['AllActivity'])
+      }),
+    )
+  })
+
+  test('same hours copies the first active day onto every day', () => {
+    const mixed: PrMergeConfig = {
+      ...DEFAULT_CONFIG,
+      schedule: {
+        ...DEFAULT_CONFIG.schedule,
+        days: DEFAULT_CONFIG.schedule.days.map(window =>
+          window.day === 'Tuesday' ? { ...window, start: '11:00' } : window,
+        ),
+      },
+    }
+    story(
+      update,
+      given({
+        ...loaded,
+        revealed: ['PerDayHours'],
+        maybeDraft: Option.some(mixed),
+      }),
+      message(Message.ClickedUseSameHours()),
+      model(current => {
+        expect(current.revealed).toEqual([])
+        expect(
+          Option.map(current.maybeDraft, draft =>
+            draft.schedule.days.every(window => window.start === '09:00'),
+          ),
+        ).toEqual(Option.some(true))
+      }),
+    )
+  })
+
+  test('adding entries splits commas, drops repeats, and clears the input', () => {
+    story(
+      update,
+      given({ ...loaded, ignoredRepoEntry: 'a/b, c/d,a/b' }),
+      message(Message.ClickedAddEntry({ list: 'IgnoredRepos' })),
+      model(current => {
+        expect(
+          Option.map(current.maybeDraft, draft => draft.ignoredRepos),
+        ).toEqual(Option.some(['a/b', 'c/d']))
+        expect(current.ignoredRepoEntry).toBe('')
+      }),
+    )
+  })
+
+  test('an empty entry changes nothing', () => {
+    story(
+      update,
+      given({ ...loaded, accountEntry: ' , ' }),
+      message(Message.ClickedAddEntry({ list: 'Accounts' })),
       model(current => {
         expect(Option.isNone(current.maybeDraft)).toBe(true)
       }),

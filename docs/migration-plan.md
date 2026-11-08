@@ -41,6 +41,8 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 
 The app has two tabs, Lights and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
 
+The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
+
 ### Automations service
 
 The Lights tab still needs no backend. The Automations tab does, because Zigbee2MQTT's socket only relays what Zigbee2MQTT itself publishes, and something must keep watching GitHub when no browser is open.

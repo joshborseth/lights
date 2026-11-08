@@ -289,6 +289,40 @@ export const isScheduleOpen = (
   )
 }
 
+const enabledDays = (schedule: ScheduleConfig): ReadonlyArray<DayWindow> =>
+  Array.filter(schedule.days, window => window.isEnabled)
+
+export const hasSameHours = (schedule: ScheduleConfig): boolean =>
+  Option.match(Array.head(enabledDays(schedule)), {
+    onNone: () => true,
+    onSome: first =>
+      Array.every(
+        enabledDays(schedule),
+        window => window.start === first.start && window.end === first.end,
+      ),
+  })
+
+export const sharedHours = (
+  schedule: ScheduleConfig,
+): Readonly<{ start: string; end: string }> =>
+  pipe(
+    Array.head(enabledDays(schedule)),
+    Option.orElse(() => Array.head(schedule.days)),
+    Option.match({
+      onNone: () => ({ start: '09:00', end: '17:00' }),
+      onSome: ({ start, end }) => ({ start, end }),
+    }),
+  )
+
+export const withSameHours = (
+  schedule: ScheduleConfig,
+  start: string,
+  end: string,
+): ScheduleConfig => ({
+  ...schedule,
+  days: Array.map(schedule.days, window => ({ ...window, start, end })),
+})
+
 // COLOR
 
 export const hexToHueSaturation = (

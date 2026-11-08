@@ -1,4 +1,14 @@
-import { Duration, Effect, Match, Option, Schema, Stream, pipe } from 'effect'
+import {
+  Array,
+  Duration,
+  Effect,
+  Match,
+  Option,
+  Schema,
+  Stream,
+  String,
+  pipe,
+} from 'effect'
 import { Command, type Update } from 'foldkit'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
@@ -11,7 +21,10 @@ import {
   Snapshot,
   SnapshotValue,
   configProblem,
+  hasSameHours,
   normalizeConfig,
+  sharedHours,
+  withSameHours,
 } from './automation'
 
 // MODEL
@@ -40,8 +53,46 @@ export const Action = defineTaggedUnion({
 })
 export type Action = typeof Action.Type
 
+export const PrMergedSection = Schema.Literals([
+  'Pause',
+  'When',
+  'OnlyDuring',
+  'Do',
+])
+export type PrMergedSection = typeof PrMergedSection.Type
+
+export const ConnectionSection = Schema.Literals([
+  'GitHub',
+  'Lights',
+  'Service',
+])
+export type ConnectionSection = typeof ConnectionSection.Type
+
+export const Screen = defineTaggedUnion({
+  List: {},
+  PrMerged: { maybeOpenSection: Schema.Option(PrMergedSection) },
+  Connections: { maybeOpenSection: Schema.Option(ConnectionSection) },
+})
+export type Screen = typeof Screen.Type
+
+export const Reveal = Schema.Literals([
+  'PerDayHours',
+  'TimeZone',
+  'FlashDetails',
+  'GitHubDetails',
+  'AllActivity',
+])
+export type Reveal = typeof Reveal.Type
+
+export const EntryList = Schema.Literals(['Accounts', 'IgnoredRepos'])
+export type EntryList = typeof EntryList.Type
+
 export const Model = Schema.Struct({
   remote: Remote,
+  screen: Screen,
+  revealed: Schema.Array(Reveal),
+  accountEntry: Schema.String,
+  ignoredRepoEntry: Schema.String,
   maybeDraft: Schema.Option(PrMergeConfig),
   saveState: SaveState,
   maybeRunningAction: Schema.Option(Action),
@@ -52,6 +103,10 @@ export type Model = typeof Model.Type
 
 export const init: Model = {
   remote: Remote.Loading(),
+  screen: Screen.List(),
+  revealed: [],
+  accountEntry: '',
+  ignoredRepoEntry: '',
   maybeDraft: Option.none(),
   saveState: SaveState.Idle(),
   maybeRunningAction: Option.none(),
@@ -62,6 +117,11 @@ export const init: Model = {
 // MESSAGE
 
 export const Message = defineMessageUnion({
+  SelectedScreen: { screen: Screen },
+  ClickedReveal: { reveal: Reveal },
+  ClickedUseSameHours: {},
+  UpdatedEntry: { list: EntryList, value: Schema.String },
+  ClickedAddEntry: { list: EntryList },
   TickedRefresh: {},
   SucceededFetchSnapshot: { snapshot: SnapshotValue },
   FailedFetchSnapshot: { error: Schema.String },
@@ -181,8 +241,108 @@ type UpdateReturn = Update.Return<Model, Message>
 const withSnapshot = (model: Model, snapshot: Snapshot): Model =>
   modifyFields(model, { remote: () => Remote.Loaded({ snapshot }) })
 
+const currentConfig = (model: Model): Option.Option<PrMergeConfig> =>
+  Option.orElse(model.maybeDraft, () =>
+    Match.value(model.remote).pipe(
+      Match.withReturnType<Option.Option<PrMergeConfig>>(),
+      Match.tag('Loaded', ({ snapshot }) => Option.some(snapshot.config)),
+      Match.orElse(() => Option.none()),
+    ),
+  )
+
+const withEdit = (model: Model, draft: PrMergeConfig): Model =>
+  modifyFields(model, {
+    maybeDraft: () => Option.some(draft),
+    saveState: () => SaveState.Idle(),
+  })
+
+const splitEntries = (raw: string): ReadonlyArray<string> =>
+  pipe(raw.split(','), Array.map(String.trim), Array.filter(String.isNonEmpty))
+
+const entryText = (model: Model, list: EntryList): string =>
+  list === 'Accounts' ? model.accountEntry : model.ignoredRepoEntry
+
+const withEntryText = (model: Model, list: EntryList, value: string): Model =>
+  list === 'Accounts'
+    ? modifyFields(model, { accountEntry: () => value })
+    : modifyFields(model, { ignoredRepoEntry: () => value })
+
+const withAddedEntries = (
+  config: PrMergeConfig,
+  list: EntryList,
+  entries: ReadonlyArray<string>,
+): PrMergeConfig =>
+  list === 'Accounts'
+    ? { ...config, accounts: Array.dedupe([...config.accounts, ...entries]) }
+    : {
+        ...config,
+        ignoredRepos: Array.dedupe([...config.ignoredRepos, ...entries]),
+      }
+
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
+    SelectedScreen: ({ screen }) => ({
+      model: modifyFields(model, {
+        screen: () => screen,
+        revealed: revealed =>
+          screen._tag === model.screen._tag ? revealed : [],
+      }),
+    }),
+
+    ClickedReveal: ({ reveal }) => ({
+      model: modifyFields(model, {
+        revealed: revealed =>
+          Array.contains(revealed, reveal)
+            ? Array.filter(revealed, candidate => candidate !== reveal)
+            : [...revealed, reveal],
+      }),
+    }),
+
+    ClickedUseSameHours: () => {
+      const collapsed = modifyFields(model, {
+        revealed: revealed =>
+          Array.filter(revealed, reveal => reveal !== 'PerDayHours'),
+      })
+      return pipe(
+        currentConfig(model),
+        Option.filter(config => !hasSameHours(config.schedule)),
+        Option.match({
+          onNone: () => ({ model: collapsed }),
+          onSome: config => {
+            const { start, end } = sharedHours(config.schedule)
+            return {
+              model: withEdit(collapsed, {
+                ...config,
+                schedule: withSameHours(config.schedule, start, end),
+              }),
+            }
+          },
+        }),
+      )
+    },
+
+    UpdatedEntry: ({ list, value }) => ({
+      model: withEntryText(model, list, value),
+    }),
+
+    ClickedAddEntry: ({ list }) => {
+      const entries = splitEntries(entryText(model, list))
+      return pipe(
+        currentConfig(model),
+        Option.filter(() => Array.isReadonlyArrayNonEmpty(entries)),
+        Option.match({
+          onNone: () => ({ model }),
+          onSome: config => ({
+            model: withEntryText(
+              withEdit(model, withAddedEntries(config, list, entries)),
+              list,
+              '',
+            ),
+          }),
+        }),
+      )
+    },
+
     TickedRefresh: () => ({ model, commands: [FetchSnapshot()] }),
 
     SucceededFetchSnapshot: ({ snapshot }) => ({
@@ -230,12 +390,7 @@ export const update = (model: Model, message: Message) =>
       }),
     }),
 
-    UpdatedDraft: ({ draft }) => ({
-      model: modifyFields(model, {
-        maybeDraft: () => Option.some(draft),
-        saveState: () => SaveState.Idle(),
-      }),
-    }),
+    UpdatedDraft: ({ draft }) => ({ model: withEdit(model, draft) }),
 
     ClickedDiscardDraft: () => ({
       model: modifyFields(model, {

@@ -68,7 +68,7 @@ const SKELETON_LIGHT_COUNT = 3
 const PAGE_COLUMN =
   'mx-auto max-w-xl pr-[max(env(safe-area-inset-right),1rem)] pl-[max(env(safe-area-inset-left),1rem)]'
 const PAGE_HEADER =
-  'sticky top-0 z-30 bg-background pt-[max(calc(env(safe-area-inset-top)+0.75rem),1.25rem)] pb-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-background after:to-transparent'
+  'sticky top-0 z-30 bg-background pt-[max(calc(env(safe-area-inset-top)+2.5rem),1.25rem)] pb-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-background after:to-transparent'
 const SECTION = 'flex flex-col gap-3'
 const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
 const CARD_RAIL = 'ml-1.5 flex flex-col gap-3 border-l border-border pl-3'

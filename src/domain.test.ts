@@ -2,13 +2,16 @@ import { Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 
 import {
+  type GroupNode,
   IncomingFrame,
   Setting,
   type Setting as SettingType,
+  buildLightTree,
   decodeFrame,
   hueSaturationToHex,
   powerFrame,
   settingFrame,
+  shortLightName,
 } from './domain'
 
 const frame = (topic: string, payload: unknown) =>
@@ -158,5 +161,151 @@ describe('hueSaturationToHex', () => {
     [32, 0, '#ffffff'],
   ])('%i/%i is %s', (hue, saturation, hex) => {
     expect(hueSaturationToHex({ hue, saturation })).toBe(hex)
+  })
+})
+
+describe('buildLightTree', () => {
+  const light = (name: string, address: string) => ({
+    name,
+    address,
+    maybeColorTempRange: Option.none(),
+    supportsColor: true,
+  })
+  const group = (name: string, memberAddresses: ReadonlyArray<string>) => ({
+    name,
+    memberAddresses,
+  })
+  const shape = (node: GroupNode): unknown => ({
+    [node.group.name]: [
+      ...node.childGroups.map(shape),
+      ...node.lights.map(({ name }) => name),
+    ],
+  })
+
+  const lights = [
+    light('Living Room Orb', 'lr1'),
+    light('Living Room Shroom', 'lr2'),
+    light('Bedroom UFO', 'b1'),
+    light('Bedroom Sphere', 'b2'),
+    light('Bathroom Orb', 'ba1'),
+    light('Kitchen Light Less Wobbly Chair Side', 'k1'),
+    light('Kitchen Light More Wobbly Chair Side', 'k2'),
+  ]
+  const allAddresses = ['lr1', 'lr2', 'b1', 'b2', 'ba1', 'k1', 'k2']
+  const house = [
+    group('All Lights', allAddresses),
+    group('Bedroom', ['b1', 'b2']),
+    group('Rest of the House', ['lr1', 'lr2', 'ba1', 'k1', 'k2']),
+    group('Living Room', ['lr1', 'lr2']),
+    group('Kitchen', ['k1', 'k2']),
+  ]
+
+  test('nests the real house by bulb membership', () => {
+    const tree = buildLightTree(lights, house)
+    expect(tree.roots.map(shape)).toEqual([
+      {
+        'All Lights': [
+          {
+            'Rest of the House': [
+              { 'Living Room': ['Living Room Orb', 'Living Room Shroom'] },
+              {
+                Kitchen: [
+                  'Kitchen Light Less Wobbly Chair Side',
+                  'Kitchen Light More Wobbly Chair Side',
+                ],
+              },
+              'Bathroom Orb',
+            ],
+          },
+          { Bedroom: ['Bedroom UFO', 'Bedroom Sphere'] },
+        ],
+      },
+    ])
+    expect(tree.looseLights).toEqual([])
+    expect(tree.crossingGroups).toEqual([])
+  })
+
+  test('without room groups, bulbs sit directly under their parent', () => {
+    const tree = buildLightTree(lights, house.slice(0, 3))
+    expect(tree.roots.map(shape)).toEqual([
+      {
+        'All Lights': [
+          {
+            'Rest of the House': [
+              'Living Room Orb',
+              'Living Room Shroom',
+              'Bathroom Orb',
+              'Kitchen Light Less Wobbly Chair Side',
+              'Kitchen Light More Wobbly Chair Side',
+            ],
+          },
+          { Bedroom: ['Bedroom UFO', 'Bedroom Sphere'] },
+        ],
+      },
+    ])
+  })
+
+  test('a group spanning rooms is listed apart and leaves the tree whole', () => {
+    const tree = buildLightTree(lights, [
+      ...house,
+      group('Reading Lamps', ['lr1', 'b1']),
+    ])
+    expect(tree.crossingGroups.map(shape)).toEqual([
+      { 'Reading Lamps': ['Living Room Orb', 'Bedroom UFO'] },
+    ])
+    expect(tree.roots.map(node => node.group.name)).toEqual(['All Lights'])
+    expect(tree.roots[0]?.childGroups.map(node => node.group.name)).toEqual([
+      'Rest of the House',
+      'Bedroom',
+    ])
+  })
+
+  test('of two groups with the same bulbs, only the first nests', () => {
+    const tree = buildLightTree(lights, [
+      group('Bedroom', ['b1', 'b2']),
+      group('Sleep', ['b1', 'b2']),
+    ])
+    expect(tree.roots.map(node => node.group.name)).toEqual(['Bedroom'])
+    expect(tree.crossingGroups.map(node => node.group.name)).toEqual(['Sleep'])
+  })
+
+  test('bulbs in no group are loose, and empty groups disappear', () => {
+    const tree = buildLightTree(lights.slice(0, 2), [
+      group('Living Room', ['lr1']),
+      group('Gone', ['missing']),
+    ])
+    expect(tree.roots.map(shape)).toEqual([
+      { 'Living Room': ['Living Room Orb'] },
+    ])
+    expect(tree.looseLights.map(({ name }) => name)).toEqual([
+      'Living Room Shroom',
+    ])
+  })
+})
+
+describe('shortLightName', () => {
+  const named = (name: string, address: string) => ({
+    name,
+    address,
+    maybeColorTempRange: Option.none(),
+    supportsColor: false,
+  })
+
+  test('drops the words every sibling shares', () => {
+    const less = named('Kitchen Light Less Wobbly', 'a')
+    const more = named('Kitchen Light More Wobbly', 'b')
+    expect(shortLightName([less, more], less)).toBe('Less Wobbly')
+  })
+
+  test('keeps the name of an only child', () => {
+    const orb = named('Bathroom Orb', 'a')
+    expect(shortLightName([orb], orb)).toBe('Bathroom Orb')
+  })
+
+  test('keeps full names when shortening would leave one blank', () => {
+    const lamp = named('Lamp', 'a')
+    const lampTwo = named('Lamp Two', 'b')
+    expect(shortLightName([lamp, lampTwo], lamp)).toBe('Lamp')
+    expect(shortLightName([lamp, lampTwo], lampTwo)).toBe('Lamp Two')
   })
 })

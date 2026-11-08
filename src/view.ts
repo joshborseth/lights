@@ -1,6 +1,6 @@
-import { Array, Match, Option, Order, pipe } from 'effect'
+import { Array, Match, Option } from 'effect'
 import { Document, Html, HtmlBuilder } from 'foldkit/html'
-import { Palette, Pencil, Plus } from 'lucide'
+import { ChevronRight, Palette, Pencil, Plus } from 'lucide'
 
 import { Alert } from '@/components/ui/alert'
 import { badge } from '@/components/ui/badge'
@@ -19,7 +19,7 @@ import type { Tabs } from '@foldkit/ui'
 import { type Message as AutomationsMessage } from './automations'
 import * as AutomationsView from './automationsView'
 import {
-  type Group,
+  type GroupNode,
   type Light,
   MAX_BRIGHTNESS,
   PRESET_GROUPS,
@@ -27,6 +27,8 @@ import {
   PresetLook,
   SavablePresetLook,
   Setting,
+  buildLightTree,
+  shortLightName,
 } from './domain'
 import {
   type Activity,
@@ -47,6 +49,8 @@ import {
   draftSetting,
   isEditorBusy,
   isExpanded,
+  isGroupOpen,
+  isMixed,
   isStrugglingToConnect,
   lightsOfTarget,
   presetEditorProblem,
@@ -56,20 +60,6 @@ import {
   targetStatus,
 } from './main'
 
-const ROOM_ORDER: ReadonlyArray<string> = [
-  'Living Room',
-  'Kitchen',
-  'Bedroom',
-  'Bathroom',
-]
-const OTHER_ROOM = 'Other'
-
-const GROUP_ORDER: ReadonlyArray<string> = [
-  'All Lights',
-  'Rest of the House',
-  'Bedroom',
-]
-
 const WARM_WHITE = '#ffdfae'
 const MIN_GLOW_LEVEL = 0.3
 const OFF_GLOW = 'oklch(0.42 0.008 70)'
@@ -78,6 +68,9 @@ const SKELETON_LIGHT_COUNT = 3
 
 const SECTION = 'flex flex-col gap-3'
 const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
+const CARD_RAIL = 'ml-1.5 flex flex-col gap-3 border-l border-border pl-3'
+const ROW_RAIL = 'ml-1.5 flex flex-col gap-4 border-l border-border pl-3'
+const ROW = 'flex flex-col gap-3'
 const CAPTION = 'text-xs text-muted-foreground'
 const PRIMARY_GLOW_FILL = 'slider-fill [--glow:var(--primary)] [--level:0.6]'
 const COLOR_INPUT =
@@ -88,18 +81,6 @@ const brightnessPercent = (brightness: number): number =>
 
 const formatPercent = (brightness: number): string =>
   `${brightnessPercent(brightness)}%`
-
-const roomOf = (light: Light): string =>
-  pipe(
-    Array.findFirst(ROOM_ORDER, room => light.name.startsWith(room)),
-    Option.getOrElse(() => OTHER_ROOM),
-  )
-
-const groupRank = (group: Group): number =>
-  pipe(
-    Array.findFirstIndex(GROUP_ORDER, name => name === group.name),
-    Option.getOrElse(() => GROUP_ORDER.length),
-  )
 
 const onCount = (model: Model, lights: ReadonlyArray<Light>): number =>
   Array.filter(lights, light => model.states[light.name]?.power === 'ON').length
@@ -198,7 +179,7 @@ const controlsView = (model: Model, h: HtmlBuilder<Message>): Html => {
       ),
       h.Inert(!isLive),
     ],
-    [groupsView(model, h), ...roomsView(model, h), presetsView(model, h)],
+    [...lightTreeViews(model, h), presetsView(model, h)],
   )
 }
 
@@ -425,27 +406,108 @@ const glowAttribute = (status: TargetStatus, h: HtmlBuilder<Message>) =>
     '--level': String(glowLevel(status)),
   })
 
-const groupsView = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.section(
-    [h.Class(SECTION), h.AriaLabel('Groups')],
-    Array.map(
-      Array.sortBy(Order.mapInput(Order.Number, groupRank))(model.groups),
-      group => groupCardView(model, group, h),
-    ),
+const isLeafGroup = (node: GroupNode): boolean =>
+  Array.isReadonlyArrayEmpty(node.childGroups)
+
+const lightTreeViews = (
+  model: Model,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> => {
+  const tree = buildLightTree(model.lights, model.groups)
+  return [
+    ...Array.map(tree.roots, root => rootGroupView(model, root, h)),
+    ...(Array.isReadonlyArrayEmpty(tree.looseLights)
+      ? []
+      : [
+          h.section(
+            [h.Class(SECTION), h.AriaLabel('Other lights')],
+            [
+              h.h2([h.Class(SECTION_TITLE)], ['Other lights']),
+              lightsCardView(model, tree.looseLights, h),
+            ],
+          ),
+        ]),
+    ...(Array.isReadonlyArrayEmpty(tree.crossingGroups)
+      ? []
+      : [
+          h.section(
+            [h.Class(SECTION), h.AriaLabel('Groups')],
+            [
+              h.h2([h.Class(SECTION_TITLE)], ['Groups']),
+              ...Array.map(tree.crossingGroups, node =>
+                groupCardView(
+                  model,
+                  node,
+                  [groupChildrenView(model, node, h)],
+                  h,
+                ),
+              ),
+            ],
+          ),
+        ]),
+  ]
+}
+
+const rootGroupView = (
+  model: Model,
+  root: GroupNode,
+  h: HtmlBuilder<Message>,
+): Html =>
+  isLeafGroup(root)
+    ? groupCardView(model, root, [groupChildrenView(model, root, h)], h)
+    : h.keyed('div')(
+        root.group.name,
+        [h.Class(SECTION)],
+        [
+          groupCardView(model, root, [], h),
+          h.div(
+            [h.Class(CARD_RAIL)],
+            [
+              ...Array.map(root.childGroups, child =>
+                groupCardView(
+                  model,
+                  child,
+                  [groupChildrenView(model, child, h)],
+                  h,
+                ),
+              ),
+              ...(Array.isReadonlyArrayEmpty(root.lights)
+                ? []
+                : [lightsCardView(model, root.lights, h)]),
+            ],
+          ),
+        ],
+      )
+
+const lightsCardView = (
+  model: Model,
+  lights: ReadonlyArray<Light>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Card<Message>(
+    {},
+    [
+      Card.content<Message>(
+        { className: 'flex flex-col gap-4' },
+        Array.map(lights, light => lightRowView(model, light, light.name, h)),
+        h,
+      ),
+    ],
+    h,
   )
 
 const groupCardView = (
   model: Model,
-  group: Group,
+  node: GroupNode,
+  children: ReadonlyArray<Html>,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const target = Target.Group({ name: group.name })
+  const target = Target.Group({ name: node.group.name })
   const status = targetStatus(model, target)
-  const lights = lightsOfTarget(model, target)
   return h.keyed('article')(
-    group.name,
+    node.group.name,
     [
-      h.AriaLabel(group.name),
+      h.AriaLabel(node.group.name),
       h.AriaBusy(isBusyActivity(activityOf(model, target))),
       h.Class('glow-transition'),
       glowAttribute(status, h),
@@ -456,19 +518,7 @@ const groupCardView = (
         [
           Card.content<Message>(
             { className: 'flex flex-col gap-4' },
-            [
-              targetControlsView(
-                model,
-                target,
-                group.name,
-                `${onCount(model, lights)} of ${lights.length} on`,
-                status,
-                h,
-              ),
-              PRESET_GROUPS.includes(group.name)
-                ? presetChipsView(model, target, status, h)
-                : h.empty,
-            ],
+            [groupControlsView(model, node, status, h), ...children],
             h,
           ),
         ],
@@ -478,30 +528,108 @@ const groupCardView = (
   )
 }
 
-const roomsView = (
+const groupRowView = (
   model: Model,
+  node: GroupNode,
   h: HtmlBuilder<Message>,
-): ReadonlyArray<Html> =>
-  Array.getSomes(
-    Array.map([...ROOM_ORDER, OTHER_ROOM], room => {
-      const lights = Array.filter(model.lights, light => roomOf(light) === room)
-      return Array.isReadonlyArrayEmpty(lights)
-        ? Option.none()
-        : Option.some(
-            h.section(
-              [h.Class(SECTION), h.AriaLabel(room)],
-              [
-                h.h2([h.Class(SECTION_TITLE)], [room]),
-                Card<Message>(
-                  { className: 'gap-0 py-0' },
-                  Array.map(lights, light => lightRowView(model, light, h)),
-                  h,
-                ),
-              ],
-            ),
-          )
-    }),
+): Html => {
+  const target = Target.Group({ name: node.group.name })
+  const status = targetStatus(model, target)
+  return h.keyed('article')(
+    node.group.name,
+    [
+      h.AriaLabel(node.group.name),
+      h.AriaBusy(isBusyActivity(activityOf(model, target))),
+      h.Class(`glow-transition ${ROW}`),
+      glowAttribute(status, h),
+    ],
+    [
+      groupControlsView(model, node, status, h),
+      groupChildrenView(model, node, h),
+    ],
   )
+}
+
+const groupDetail = (model: Model, lights: ReadonlyArray<Light>): string =>
+  `${onCount(model, lights)} of ${lights.length} on${isMixed(model, lights) ? ' · mixed' : ''}`
+
+const groupControlsView = (
+  model: Model,
+  node: GroupNode,
+  status: TargetStatus,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const name = node.group.name
+  const target = Target.Group({ name })
+  return h.div(
+    [h.Class('flex flex-col gap-4')],
+    [
+      targetControlsView(
+        model,
+        target,
+        name,
+        groupDetail(model, lightsOfTarget(model, target)),
+        status,
+        isLeafGroup(node)
+          ? Option.some(groupBulbsButtonView(name, isGroupOpen(model, name), h))
+          : Option.none(),
+        h,
+      ),
+      PRESET_GROUPS.includes(name)
+        ? presetChipsView(model, target, status, h)
+        : h.empty,
+    ],
+  )
+}
+
+const groupBulbsButtonView = (
+  name: string,
+  isOpen: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
+  button<Message>(
+    {
+      variant: 'ghost',
+      size: 'icon-lg',
+      onClick: Message.ClickedGroupBulbs({ group: name }),
+      className: '-ml-2 -mr-1 text-muted-foreground',
+      attributes: [h.AriaLabel(`${name} bulbs`), h.AriaExpanded(isOpen)],
+    },
+    icon(
+      h,
+      ChevronRight,
+      isOpen
+        ? 'size-4 shrink-0 rotate-90 transition-transform'
+        : 'size-4 shrink-0 transition-transform',
+    ),
+    h,
+  )
+
+const groupChildrenView = (
+  model: Model,
+  node: GroupNode,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const isShowingLights =
+    !isLeafGroup(node) || isGroupOpen(model, node.group.name)
+  const lightRows = isShowingLights
+    ? Array.map(node.lights, light =>
+        lightRowView(
+          model,
+          light,
+          isLeafGroup(node) ? shortLightName(node.lights, light) : light.name,
+          h,
+        ),
+      )
+    : []
+  const rows = [
+    ...Array.map(node.childGroups, child => groupRowView(model, child, h)),
+    ...lightRows,
+  ]
+  return Array.isReadonlyArrayEmpty(rows)
+    ? h.empty
+    : h.div([h.Class(ROW_RAIL)], rows)
+}
 
 const lightDetail = (
   model: Model,
@@ -537,6 +665,7 @@ const isBusyActivity = (maybeActivity: Option.Option<Activity>): boolean =>
 const lightRowView = (
   model: Model,
   light: Light,
+  displayName: string,
   h: HtmlBuilder<Message>,
 ): Html => {
   const target = Target.Light({ name: light.name })
@@ -546,18 +675,17 @@ const lightRowView = (
     [
       h.AriaLabel(light.name),
       h.AriaBusy(isBusyActivity(activityOf(model, target))),
+      h.Class(`glow-transition ${ROW}`),
       glowAttribute(status, h),
-      h.Class(
-        'glow-transition not-first:border-t border-border flex flex-col gap-3 p-4',
-      ),
     ],
     [
       targetControlsView(
         model,
         target,
-        light.name,
+        displayName,
         lightDetail(model, target, status),
         status,
+        Option.none(),
         h,
       ),
       isExpanded(model, target)
@@ -570,11 +698,13 @@ const lightRowView = (
 const targetControlsView = (
   model: Model,
   target: Target,
-  name: string,
+  displayName: string,
   detail: string,
   status: TargetStatus,
+  maybeLeadingControl: Option.Option<Html>,
   h: HtmlBuilder<Message>,
 ): Html => {
+  const name = target.name
   const isOpen = isExpanded(model, target)
   const maybeActivity = activityOf(model, target)
   const hasNoResponse = Option.exists(
@@ -593,11 +723,12 @@ const targetControlsView = (
       h.div(
         [h.Class('flex items-center gap-3')],
         [
+          Option.getOrElse(maybeLeadingControl, () => h.empty),
           bulbDotView(status, h),
           h.div(
             [h.Class('min-w-0 flex-1')],
             [
-              h.p([h.Class('truncate font-medium')], [name]),
+              h.p([h.Class('truncate font-medium')], [displayName]),
               h.p(
                 [
                   h.Class(

@@ -83,6 +83,7 @@ const base: Model = {
   activities: [],
   nextRequestId: 0,
   maybeExpanded: Option.none(),
+  openGroups: [],
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),

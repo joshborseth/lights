@@ -232,6 +232,46 @@ describe('rainbow loops', () => {
     expect(isLooping(extension, 'Rest of the House')).toBe(false)
   })
 
+  test('a command to a bulb stops loops on groups that contain it', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'Rest of the House' })
+    await send(extension, 'Orb/set', { brightness: 40 })
+    expect(isLooping(extension, 'Rest of the House')).toBe(false)
+  })
+
+  test('a command to a group stops loops on groups that overlap it', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'All Lights' })
+    await send(extension, 'Bedroom/set', { brightness: 40 })
+    expect(isLooping(extension, 'All Lights')).toBe(false)
+  })
+
+  test('a group preset stops loops on groups that overlap it', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'All Lights' })
+    await send(extension, 'preset/set', {
+      name: 'Full red',
+      group: 'Rest of the House',
+    })
+    expect(isLooping(extension, 'All Lights')).toBe(false)
+  })
+
+  test('a command to a group leaves separate groups running', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'Rest of the House' })
+    await send(extension, 'Bedroom/set', { state: 'OFF' })
+    expect(isLooping(extension, 'Rest of the House')).toBe(true)
+    extension.stop()
+  })
+
+  test('its own frames do not stop a group loop', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'All Lights' })
+    await send(extension, 'All Lights/set', { color: { hex: '#FF0000' } })
+    expect(isLooping(extension, 'All Lights')).toBe(true)
+    extension.stop()
+  })
+
   test('a bulb preset leaves other loops running', async () => {
     const { extension } = make()
     await start(extension, { light: 'Orb' })

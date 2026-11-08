@@ -4,15 +4,15 @@ Replace Windfront, the Zigbee2MQTT web UI, with a small Foldkit app as the every
 
 ## What runs today
 
-| Piece                                      | What it does                                                                                   | Plan                  |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------- |
-| Zigbee2MQTT 2.14.2 and the USB coordinator | Talks to the 7 bulbs and owns 3 groups: All Lights, Bedroom, Rest of the House                 | Keep                  |
-| Mosquitto                                  | MQTT broker for Zigbee2MQTT and the scripts below                                              | Keep                  |
-| `presets.mjs` extension and `presets.json` | 10 presets, including the coordinator-driven Rainbow loop                                      | Keep                  |
-| Windfront 2.15.0                           | Today's lights UI, bundled with Zigbee2MQTT                                                    | Replace for daily use |
-| 9 PM all-off timer                         | Publishes to MQTT                                                                              | Keep, unaffected      |
-| PR-merge purple flash                      | Runs in the automations service, see below                                                     | Replaced              |
-| Home Assistant, Music Assistant            | TV and music only. Home Assistant has no MQTT integration, so it does not control these lights | Out of scope          |
+| Piece                                      | What it does                                                                                         | Plan                  |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------- |
+| Zigbee2MQTT 2.14.2 and the USB coordinator | Talks to the 7 bulbs and owns 5 groups: All Lights, Rest of the House, Bedroom, Living Room, Kitchen | Keep                  |
+| Mosquitto                                  | MQTT broker for Zigbee2MQTT and the scripts below                                                    | Keep                  |
+| `presets.mjs` extension and `presets.json` | 10 presets, including the coordinator-driven Rainbow loop                                            | Keep                  |
+| Windfront 2.15.0                           | Today's lights UI, bundled with Zigbee2MQTT                                                          | Replace for daily use |
+| 9 PM all-off timer                         | Publishes to MQTT                                                                                    | Keep, unaffected      |
+| PR-merge purple flash                      | Runs in the automations service, see below                                                           | Replaced              |
+| Home Assistant, Music Assistant            | TV and music only. Home Assistant has no MQTT integration, so it does not control these lights       | Out of scope          |
 
 Zigbee2MQTT and Mosquitto have to stay, because something must drive the radio. Only the UI layer changes, so the swap carries little risk: the new app is one more client.
 
@@ -36,6 +36,7 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 - A `Subscription` turns frames into Messages.
 - A `Command` sends each light command.
 - Effect `Schema` decodes each known topic at the boundary. Unknown topics are ignored.
+- The screen is one tree built from Zigbee2MQTT's groups: a group nests under the smallest group that fully contains it. A group that cuts across the tree, such as one spanning two rooms, is listed separately. Every level has the same controls.
 - The UI uses [foldcn](https://foldcn.elianiva.com) components, copied into `src/components/ui/`. Its Slider handles brightness and temperature with large touch targets. Only the slider being dragged keeps state, in `maybeActiveSlider`, so no bulb needs its own Slider Submodel. Foldcn has no color picker, so color stays a native input.
 
 The app has two tabs, Lights and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
@@ -73,7 +74,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for All Lights or Rest of the House, or `{"name": ..., "light": ...}` for one bulb. The extension refuses other groups, and any `light` that Zigbee2MQTT does not report as a light.
 - **The Bedroom group has no presets, on purpose.** Do not offer them there. Each bedroom bulb can still take a preset on its own.
 - **Offer a bulb only the presets it can show.** A Color or Rainbow preset needs color support, and a White preset needs color temperature.
-- **Any other command to a target stops its Rainbow loop.** That is the intended way to end it. A command to a group also stops loops on its member bulbs.
+- **Any other command to a target stops every Rainbow loop that shares a bulb with it.** That is the intended way to end it. A command to one bulb stops a Rainbow on a group that contains it, and a command to a group stops loops on its bulbs and on groups that overlap it. Groups that share no bulb are left alone.
 - **A preset ends any Rainbow loop that overlaps its target.** Without this, the loop repaints the target on its next frame. A preset on one bulb stops a Rainbow on a group that contains it, and the other bulbs hold their last color.
 - **Send On and Off twice, 400 ms apart, for groups and bulbs.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
 - **Show reported state, not assumed state.** A slider may lead while dragging, but the next state frame from the bulb wins.

@@ -4,6 +4,7 @@ import {
   Effect,
   Match,
   Option,
+  Order,
   Queue,
   Record,
   Schema,
@@ -66,6 +67,7 @@ const PRESET_SAVE_TIMEOUT_MS = 5000
 const NO_RESPONSE_NOTICE_MS = 4000
 const STARTUP_FRAMES_TIMEOUT_MS = 3000
 const STRUGGLING_CONNECTION_ATTEMPTS = 3
+const BRIGHTNESS_MATCH_TOLERANCE = 3
 export const PRESET_COLOR_TEMP_RANGE: ColorTempRange = { min: 153, max: 555 }
 
 // MODEL
@@ -176,6 +178,7 @@ export const Model = Schema.Struct({
   activities: Schema.Array(TargetActivity),
   nextRequestId: Schema.Number,
   maybeExpanded: Schema.Option(Target),
+  openGroups: Schema.Array(Schema.String),
   maybeActiveSlider: Schema.Option(ActiveSlider),
   presetEditor: PresetEditor,
   maybeProblem: Schema.Option(Schema.String),
@@ -195,6 +198,7 @@ export const Message = defineMessageUnion({
   ReceivedFrame: { frame: IncomingFrame },
   ClickedPower: { target: Target },
   ClickedExpand: { target: Target },
+  ClickedGroupBulbs: { group: Schema.String },
   UpdatedSetting: { target: Target, setting: Setting },
   CompletedThrottleWait: { target: Target, kind: SettingKind },
   CompletedWaitForConfirmation: { requestId: Schema.Number },
@@ -350,6 +354,31 @@ export const activityOf = (
 
 export const isExpanded = (model: Model, target: Target): boolean =>
   Option.exists(model.maybeExpanded, expanded => isSameTarget(expanded, target))
+
+export const isGroupOpen = (model: Model, group: string): boolean =>
+  Array.contains(model.openGroups, group)
+
+export const isMixed = (
+  model: Model,
+  lights: ReadonlyArray<Light>,
+): boolean => {
+  const states = statesOf(model, lights)
+  const onStates = Array.filter(states, state => state.power === 'ON')
+  const isPartlyOn =
+    Array.isArrayNonEmpty(onStates) && onStates.length < states.length
+  return (
+    isPartlyOn ||
+    Array.match(
+      Array.map(onStates, state => state.brightness),
+      {
+        onEmpty: () => false,
+        onNonEmpty: levels =>
+          Array.max(levels, Order.Number) - Array.min(levels, Order.Number) >
+          BRIGHTNESS_MATCH_TOLERANCE,
+      },
+    )
+  )
+}
 
 export const presetEditorProblem = (
   model: Model,
@@ -1025,6 +1054,15 @@ export const update = (model: Model, message: Message) =>
       }),
     }),
 
+    ClickedGroupBulbs: ({ group }) => ({
+      model: modifyFields(model, {
+        openGroups: openGroups =>
+          Array.contains(openGroups, group)
+            ? Array.filter(openGroups, name => name !== group)
+            : Array.append(openGroups, group),
+      }),
+    }),
+
     UpdatedSetting: ({ target, setting }) =>
       updatedSetting(model, target, setting),
 
@@ -1241,6 +1279,7 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     activities: [],
     nextRequestId: 0,
     maybeExpanded: Option.none(),
+    openGroups: [],
     maybeActiveSlider: Option.none(),
     presetEditor: PresetEditor.Closed(),
     maybeProblem: Option.none(),

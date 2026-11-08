@@ -8,6 +8,7 @@ import {
   role,
   scene,
   text,
+  within,
 } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
@@ -79,6 +80,7 @@ const loaded: Model = {
   activities: [],
   nextRequestId: 1,
   maybeExpanded: Option.none(),
+  openGroups: ['Bedroom'],
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
@@ -184,7 +186,7 @@ describe('view', () => {
       given(loaded),
       expect(role('status')).toHaveText('Live'),
       expect(role('article', { name: 'All Lights' })).toExist(),
-      expect(role('region', { name: 'Living Room' })).toExist(),
+      expect(role('article', { name: 'Bedroom' })).toExist(),
       expect(role('switch', { name: 'Living Room Orb power' })).toHaveAttr(
         'aria-checked',
         'true',
@@ -240,6 +242,7 @@ describe('view', () => {
             supportsColor: false,
           },
         ],
+        openGroups: ['All Lights'],
         presets: [
           ...loaded.presets,
           {
@@ -323,6 +326,115 @@ describe('view', () => {
       click(role('button', { name: 'Bedroom UFO color' })),
       expect(role('slider', { name: 'Bedroom UFO temperature' })).toExist(),
     )
+  })
+
+  test('a room shows its controls and hides its bulbs until opened', () => {
+    scene(
+      { update, view },
+      given({ ...loaded, openGroups: [] }),
+      expect(role('switch', { name: 'Bedroom power' })).toExist(),
+      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
+      expect(role('button', { name: 'Bedroom bulbs' })).toHaveAttr(
+        'aria-expanded',
+        'false',
+      ),
+      click(role('button', { name: 'Bedroom bulbs' })),
+      expect(role('switch', { name: 'Bedroom UFO power' })).toExist(),
+      expect(role('button', { name: 'Bedroom bulbs' })).toHaveAttr(
+        'aria-expanded',
+        'true',
+      ),
+      click(role('button', { name: 'Bedroom bulbs' })),
+      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
+    )
+  })
+
+  describe('with the rooms nested', () => {
+    const nested: Model = {
+      ...loaded,
+      lights: [
+        light('Living Room Orb', 'a'),
+        light('Living Room Shroom', 'c'),
+        light('Bedroom UFO', 'b'),
+        light('Bathroom Orb', 'd'),
+      ],
+      groups: [
+        { name: 'All Lights', memberAddresses: ['a', 'b', 'c', 'd'] },
+        { name: 'Bedroom', memberAddresses: ['b'] },
+        { name: 'Rest of the House', memberAddresses: ['a', 'c', 'd'] },
+        { name: 'Living Room', memberAddresses: ['a', 'c'] },
+      ],
+      states: {
+        'Living Room Orb': on,
+        'Living Room Shroom': { ...on, brightness: 40 },
+        'Bedroom UFO': { ...on, power: 'OFF' },
+        'Bathroom Orb': on,
+      },
+      openGroups: ['Living Room'],
+    }
+
+    test('a room sits inside its parent group, with short bulb names', () => {
+      scene(
+        { update, view },
+        given(nested),
+        expect(
+          within(
+            role('article', { name: 'Rest of the House' }),
+            role('article', { name: 'Living Room' }),
+          ),
+        ).toExist(),
+        expect(
+          within(role('article', { name: 'Living Room Orb' }), text('Orb')),
+        ).toExist(),
+        expect(
+          within(
+            role('article', { name: 'Rest of the House' }),
+            role('switch', { name: 'Bathroom Orb power' }),
+          ),
+        ).toExist(),
+      )
+    })
+
+    test('a parent says when the bulbs below it differ', () => {
+      scene(
+        { update, view },
+        given(nested),
+        expect(
+          within(
+            role('article', { name: 'Living Room' }),
+            text('2 of 2 on · mixed'),
+          ),
+        ).toExist(),
+      )
+    })
+
+    test('a room is commanded as one group, sent twice', () => {
+      scene(
+        { update, view },
+        given(nested),
+        click(role('switch', { name: 'Living Room power' })),
+        Command.expectHas(
+          SendFrameTwice({
+            frame: JSON.stringify({
+              topic: 'Living Room/set',
+              payload: { state: 'OFF' },
+            }),
+          }),
+        ),
+        Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+        settleTimedOut(1),
+        settleTimedOut(2),
+      )
+    })
+
+    test('rooms get no group presets', () => {
+      scene(
+        { update, view },
+        given(nested),
+        expect(role('button', { name: 'Red on Rest of the House' })).toExist(),
+        expect(role('button', { name: 'Red on Living Room' })).not.toExist(),
+      )
+    })
   })
 
   test('Rainbow has no edit button', () => {

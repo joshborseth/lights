@@ -352,20 +352,30 @@ export default class LightPresets {
     }
   }
 
+  // Every target that shares a bulb with this one: the target itself, its
+  // bulbs, and each group holding this bulb or any of those bulbs. Groups that
+  // share no bulb with it are left out, so Bedroom never touches a Rainbow on
+  // Rest of the House.
+  overlappingNames(target) {
+    const names = [target, ...this.memberNames(target)]
+    return [
+      ...new Set([
+        ...names,
+        ...names.flatMap(name => this.groupNamesContaining(name)),
+      ]),
+    ]
+  }
+
   // A loop on an overlapping group or bulb would repaint this target on its
   // next frame, so a preset has to end those loops to stick.
   stopOverlappingLoops(target) {
-    for (const name of [
-      target,
-      ...this.memberNames(target),
-      ...this.groupNamesContaining(target),
-    ]) {
+    for (const name of this.overlappingNames(target)) {
       this.stopLoop(name)
     }
   }
 
   stopCommandedLoops(target) {
-    for (const name of [target, ...this.memberNames(target)]) {
+    for (const name of this.overlappingNames(target)) {
       if (this.loops.get(name)?.active != null) {
         this.logger.info(
           `Stopping rainbow loop on ${name} because ${target} received another command`,

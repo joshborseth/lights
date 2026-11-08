@@ -9,6 +9,7 @@ import {
   pipe,
 } from 'effect'
 import { defineTaggedUnion } from 'foldkit/schema'
+import { modifyFields } from 'foldkit/struct'
 
 export const MIN_BRIGHTNESS = 1
 export const MAX_BRIGHTNESS = 254
@@ -66,6 +67,193 @@ export const clampGroupLevel = (
     minimum: Array.min(brightnesses, Order.Number),
     maximum: Array.max(brightnesses, Order.Number),
   })
+
+// HIERARCHY
+
+export type GroupNode = Readonly<{
+  group: Group
+  childGroups: ReadonlyArray<GroupNode>
+  lights: ReadonlyArray<Light>
+}>
+
+export type LightTree = Readonly<{
+  roots: ReadonlyArray<GroupNode>
+  looseLights: ReadonlyArray<Light>
+  crossingGroups: ReadonlyArray<GroupNode>
+}>
+
+const memberCount = (group: Group): number => group.memberAddresses.length
+
+const smallestFirst = Order.mapInput(Order.Number, memberCount)
+
+const largestFirst = Order.mapInput(
+  Order.Number,
+  (group: Group) => -memberCount(group),
+)
+
+const isNestedIn = (inner: Group, outer: Group): boolean =>
+  memberCount(inner) < memberCount(outer) &&
+  Array.every(inner.memberAddresses, address =>
+    Array.contains(outer.memberAddresses, address),
+  )
+
+const sharesMember = (first: Group, second: Group): boolean =>
+  Array.some(first.memberAddresses, address =>
+    Array.contains(second.memberAddresses, address),
+  )
+
+const crosses = (first: Group, second: Group): boolean =>
+  first.name !== second.name &&
+  sharesMember(first, second) &&
+  !isNestedIn(first, second) &&
+  !isNestedIn(second, first)
+
+const crossingCount = (group: Group, groups: ReadonlyArray<Group>): number =>
+  Array.filter(groups, other => crosses(group, other)).length
+
+const mostCrossingGroup = (
+  groups: ReadonlyArray<Group>,
+): Option.Option<Group> =>
+  Array.reduce(
+    Array.filter(groups, group => crossingCount(group, groups) > 0),
+    Option.none<Group>(),
+    (maybeWorst, group) =>
+      Option.match(maybeWorst, {
+        onNone: () => Option.some(group),
+        onSome: worst =>
+          Option.some(
+            crossingCount(group, groups) >= crossingCount(worst, groups)
+              ? group
+              : worst,
+          ),
+      }),
+  )
+
+const withoutCrossingGroups = (
+  groups: ReadonlyArray<Group>,
+): ReadonlyArray<Group> =>
+  Option.match(mostCrossingGroup(groups), {
+    onNone: () => groups,
+    onSome: worst =>
+      withoutCrossingGroups(
+        Array.filter(groups, group => group.name !== worst.name),
+      ),
+  })
+
+const parentOf = (
+  group: Group,
+  nestedGroups: ReadonlyArray<Group>,
+): Option.Option<Group> =>
+  Array.head(
+    Array.sort(
+      Array.filter(nestedGroups, other => isNestedIn(group, other)),
+      smallestFirst,
+    ),
+  )
+
+const toGroupNode = (
+  group: Group,
+  nestedGroups: ReadonlyArray<Group>,
+  lights: ReadonlyArray<Light>,
+): GroupNode => {
+  const childGroups = Array.filter(nestedGroups, candidate =>
+    Option.exists(
+      parentOf(candidate, nestedGroups),
+      parent => parent.name === group.name,
+    ),
+  )
+  const addressesInChildGroups = Array.flatMap(
+    childGroups,
+    child => child.memberAddresses,
+  )
+  return {
+    group,
+    childGroups: Array.map(Array.sort(childGroups, largestFirst), child =>
+      toGroupNode(child, nestedGroups, lights),
+    ),
+    lights: Array.filter(
+      lights,
+      light =>
+        Array.contains(group.memberAddresses, light.address) &&
+        !Array.contains(addressesInChildGroups, light.address),
+    ),
+  }
+}
+
+// NOTE: Groups form a tree when each pair is either separate or one fully
+// inside the other. A group that cuts across that shape cannot have one place
+// in the tree, so it is listed on its own with all of its bulbs.
+export const buildLightTree = (
+  lights: ReadonlyArray<Light>,
+  groups: ReadonlyArray<Group>,
+): LightTree => {
+  const knownGroups = pipe(
+    groups,
+    Array.map(group =>
+      modifyFields(group, {
+        memberAddresses: addresses =>
+          Array.filter(addresses, address =>
+            Array.some(lights, light => light.address === address),
+          ),
+      }),
+    ),
+    Array.filter(group => Array.isReadonlyArrayNonEmpty(group.memberAddresses)),
+  )
+  const nestedGroups = withoutCrossingGroups(knownGroups)
+  const addressesInTree = Array.flatMap(
+    nestedGroups,
+    group => group.memberAddresses,
+  )
+  return {
+    roots: pipe(
+      nestedGroups,
+      Array.filter(group => Option.isNone(parentOf(group, nestedGroups))),
+      Array.sort(largestFirst),
+      Array.map(group => toGroupNode(group, nestedGroups, lights)),
+    ),
+    looseLights: Array.filter(
+      lights,
+      light => !Array.contains(addressesInTree, light.address),
+    ),
+    crossingGroups: pipe(
+      knownGroups,
+      Array.filter(
+        group =>
+          !Array.some(nestedGroups, nested => nested.name === group.name),
+      ),
+      Array.map(group => ({
+        group,
+        childGroups: [],
+        lights: Array.filter(lights, light =>
+          Array.contains(group.memberAddresses, light.address),
+        ),
+      })),
+    ),
+  }
+}
+
+const wordsOf = (name: string): ReadonlyArray<string> =>
+  pipe(name, String.split(' '))
+
+export const shortLightName = (
+  siblings: ReadonlyArray<Light>,
+  light: Light,
+): string => {
+  const siblingWords = Array.map(siblings, sibling => wordsOf(sibling.name))
+  const words = wordsOf(light.name)
+  const sharedWords = Array.takeWhile(words, (word, index) =>
+    Array.every(siblingWords, candidate => candidate[index] === word),
+  )
+  const canShorten =
+    siblings.length > 1 &&
+    Array.every(
+      siblingWords,
+      candidate => candidate.length > sharedWords.length,
+    )
+  return canShorten
+    ? Array.join(Array.drop(words, sharedWords.length), ' ')
+    : light.name
+}
 
 // PRESETS
 

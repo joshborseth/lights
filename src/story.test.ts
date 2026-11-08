@@ -1,4 +1,4 @@
-import { Option } from 'effect'
+import { Option, Record } from 'effect'
 import { Command, given, message, model, story } from 'foldkit/story'
 import { describe, expect, test } from 'vitest'
 
@@ -24,6 +24,7 @@ import {
   WaitForThrottle,
   WaitToReconnect,
   sliderDomId,
+  targetStatus,
   update,
 } from './main'
 
@@ -58,6 +59,7 @@ const base: Model = {
   ],
   groups: [{ name: 'All Lights', memberAddresses: ['a', 'b'] }],
   states: { Orb: state('OFF'), Shroom: state('ON') },
+  groupLevels: {},
   presets,
   drafts: [],
   maybeExpanded: Option.none(),
@@ -218,6 +220,172 @@ describe('power', () => {
         }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+    )
+  })
+})
+
+describe('group brightness level', () => {
+  const lit = (brightness: number): LightState => ({
+    ...state('ON'),
+    brightness,
+  })
+  const reported = (name: string, lightState: LightState) =>
+    message(
+      Message.ReceivedFrame({
+        frame: IncomingFrame.ReportedLightState({
+          name,
+          state: lightState,
+        }),
+      }),
+    )
+  const expectLevel = (target: Target, level: number) =>
+    model<Model>(next => {
+      expect(targetStatus(next, target).brightness).toBe(level)
+    })
+  const light = (name: string, address: string) => ({
+    name,
+    address,
+    maybeColorTempRange: Option.none(),
+    supportsColor: true,
+  })
+  const bedroom = Target.Group({ name: 'Bedroom' })
+  const settled: Model = {
+    ...base,
+    lights: [light('Orb', 'a'), light('Shroom', 'b'), light('Lamp', 'c')],
+    groups: [
+      { name: 'All Lights', memberAddresses: ['a', 'b', 'c'] },
+      { name: 'Bedroom', memberAddresses: ['b', 'c'] },
+    ],
+    states: { Orb: lit(100), Shroom: lit(100), Lamp: lit(100) },
+    groupLevels: { 'All Lights': 100, Bedroom: 100 },
+  }
+
+  test('editing one bulb inside the range leaves the group alone', () => {
+    story(
+      update,
+      given(settled),
+      reported('Orb', lit(200)),
+      expectLevel(allLights, 100),
+      reported('Orb', lit(150)),
+      expectLevel(allLights, 100),
+      expectLevel(orb, 150),
+    )
+  })
+
+  test('the group follows once every bulb is past it', () => {
+    story(
+      update,
+      given(settled),
+      reported('Orb', lit(180)),
+      reported('Shroom', lit(150)),
+      expectLevel(allLights, 100),
+      reported('Lamp', lit(160)),
+      expectLevel(allLights, 150),
+    )
+  })
+
+  test('the group lands on the value every bulb agrees on', () => {
+    story(
+      update,
+      given(settled),
+      reported('Orb', lit(40)),
+      reported('Shroom', lit(40)),
+      expectLevel(allLights, 100),
+      reported('Lamp', lit(40)),
+      expectLevel(allLights, 40),
+    )
+  })
+
+  test('turning off the brightest bulb leaves the group alone', () => {
+    story(
+      update,
+      given({
+        ...settled,
+        states: { Orb: lit(200), Shroom: lit(100), Lamp: lit(100) },
+        groupLevels: { 'All Lights': 200, Bedroom: 100 },
+      }),
+      reported('Orb', { ...lit(200), power: 'OFF' }),
+      expectLevel(allLights, 200),
+    )
+  })
+
+  test('a group keeps its level when a bulb misses the command', () => {
+    story(
+      update,
+      given(settled),
+      message(
+        Message.UpdatedSetting({
+          target: allLights,
+          setting: Setting.Brightness({ value: 40 }),
+        }),
+      ),
+      Command.resolveAll([SendFrame, Message.SucceededSendFrame()]),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({
+          target: allLights,
+          kind: 'Brightness',
+        }),
+      ),
+      reported('Shroom', lit(40)),
+      reported('Lamp', lit(40)),
+      expectLevel(allLights, 40),
+      expectLevel(bedroom, 40),
+      expectLevel(orb, 100),
+    )
+  })
+
+  test('frames during a drag cannot pull the level back', () => {
+    story(
+      update,
+      given({
+        ...settled,
+        drafts: [
+          {
+            target: allLights,
+            setting: Setting.Brightness({ value: 40 }),
+            isDirty: true,
+          },
+        ],
+        groupLevels: { 'All Lights': 40, Bedroom: 100 },
+      }),
+      reported('Orb', lit(100)),
+      expectLevel(allLights, 40),
+    )
+  })
+
+  test('editing one group only moves another once its bulbs are past it', () => {
+    story(
+      update,
+      given(settled),
+      reported('Shroom', lit(40)),
+      expectLevel(bedroom, 100),
+      expectLevel(allLights, 100),
+      reported('Lamp', lit(40)),
+      expectLevel(bedroom, 40),
+      expectLevel(allLights, 100),
+    )
+  })
+
+  test('a group starts at its brightest lit bulb once all have reported', () => {
+    story(
+      update,
+      given({
+        ...settled,
+        states: {},
+        groupLevels: {},
+      }),
+      reported('Orb', lit(50)),
+      model(next => {
+        expect(Option.isNone(Record.get(next.groupLevels, 'All Lights'))).toBe(
+          true,
+        )
+      }),
+      reported('Shroom', lit(200)),
+      reported('Lamp', { ...lit(254), power: 'OFF' }),
+      expectLevel(allLights, 200),
+      reported('Orb', lit(120)),
+      expectLevel(allLights, 200),
     )
   })
 })

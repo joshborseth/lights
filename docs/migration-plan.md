@@ -52,6 +52,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Any other command to a group stops its Rainbow loop.** That is the intended way to end it.
 - **Send group On and Off twice, 400 ms apart.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
 - **Show reported state, not assumed state.** A slider may lead while dragging, but the next state frame from the bulb wins.
+- **A group slider keeps its own level.** It moves when dragged, and otherwise only when every bulb in the group, on or off, has ended up above it or below it. It then moves to the nearest bulb.
 
 ## Milestones
 

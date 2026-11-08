@@ -1,4 +1,13 @@
-import { Array, Match, Number, Option, Schema, String, pipe } from 'effect'
+import {
+  Array,
+  Match,
+  Number,
+  Option,
+  Order,
+  Schema,
+  String,
+  pipe,
+} from 'effect'
 import { defineTaggedUnion } from 'foldkit/schema'
 
 export const MIN_BRIGHTNESS = 1
@@ -48,6 +57,15 @@ export const LightState = Schema.Struct({
   maybeHueSaturation: Schema.Option(HueSaturation),
 })
 export type LightState = typeof LightState.Type
+
+export const clampGroupLevel = (
+  level: number,
+  brightnesses: Array.NonEmptyReadonlyArray<number>,
+): number =>
+  Number.clamp(level, {
+    minimum: Array.min(brightnesses, Order.Number),
+    maximum: Array.max(brightnesses, Order.Number),
+  })
 
 // PRESETS
 

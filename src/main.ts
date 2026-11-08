@@ -39,6 +39,7 @@ import {
   SavablePresetLook,
   Setting,
   applyPresetFrame,
+  clampGroupLevel,
   decodeFrame,
   deletePresetFrame,
   hueSaturationToHex,
@@ -117,6 +118,7 @@ export const Model = Schema.Struct({
   lights: Schema.Array(Light),
   groups: Schema.Array(Group),
   states: Schema.Record(Schema.String, LightState),
+  groupLevels: Schema.Record(Schema.String, Schema.Number),
   presets: Schema.Array(Preset),
   drafts: Schema.Array(Draft),
   maybeExpanded: Schema.Option(Target),
@@ -234,7 +236,15 @@ export const lightsOfTarget = (
 
 export const targetStatus = (model: Model, target: Target): TargetStatus => {
   const lights = lightsOfTarget(model, target)
-  return statusOf(lights, statesOf(model, lights))
+  const status = statusOf(lights, statesOf(model, lights))
+  return Target.match(target, {
+    Light: () => status,
+    Group: ({ name }) =>
+      Option.match(Record.get(model.groupLevels, name), {
+        onNone: () => status,
+        onSome: level => modifyFields(status, { brightness: () => level }),
+      }),
+  })
 }
 
 const settingKindOf = (setting: Setting): SettingKind => setting._tag
@@ -352,18 +362,72 @@ const startReconnectWait = (model: Model): UpdateReturn => {
   }
 }
 
+// NOTE: A group has no brightness of its own once its bulbs differ, so it keeps
+// the last level until every bulb is above it or below it. A draft pins the
+// level so frames still in flight from earlier in a drag can't pull it back.
+const settledGroupLevel = (
+  model: Model,
+  group: Group,
+): Option.Option<number> => {
+  const maybeLevel = Record.get(model.groupLevels, group.name)
+  const target = Target.Group({ name: group.name })
+  if (Option.isSome(draftSetting(model, target, 'Brightness'))) {
+    return maybeLevel
+  }
+  const lights = groupMembers(model, group)
+  const states = statesOf(model, lights)
+  return Array.match(states, {
+    onEmpty: () => maybeLevel,
+    onNonEmpty: reportedStates =>
+      Option.match(maybeLevel, {
+        onNone: () =>
+          states.length === lights.length
+            ? Option.some(statusOf(lights, states).brightness)
+            : Option.none(),
+        onSome: level =>
+          Option.some(
+            clampGroupLevel(
+              level,
+              Array.map(reportedStates, state => state.brightness),
+            ),
+          ),
+      }),
+  })
+}
+
+const withSettledGroupLevels = (model: Model): Model =>
+  modifyFields(model, {
+    groupLevels: () =>
+      Record.fromEntries(
+        Array.getSomes(
+          Array.map(model.groups, group =>
+            Option.map(
+              settledGroupLevel(model, group),
+              (level): [string, number] => [group.name, level],
+            ),
+          ),
+        ),
+      ),
+  })
+
 const applyFrame = (model: Model, frame: IncomingFrame): UpdateReturn =>
   IncomingFrame.match<UpdateReturn>(frame, {
     ReportedLights: ({ lights }) => ({
-      model: modifyFields(model, { lights: () => lights }),
+      model: withSettledGroupLevels(
+        modifyFields(model, { lights: () => lights }),
+      ),
     }),
     ReportedGroups: ({ groups }) => ({
-      model: modifyFields(model, { groups: () => groups }),
+      model: withSettledGroupLevels(
+        modifyFields(model, { groups: () => groups }),
+      ),
     }),
     ReportedLightState: ({ name, state }) => ({
-      model: modifyFields(model, {
-        states: states => Record.set(states, name, state),
-      }),
+      model: withSettledGroupLevels(
+        modifyFields(model, {
+          states: states => Record.set(states, name, state),
+        }),
+      ),
     }),
     ReportedBridge: ({ isOnline }) => ({
       model: modifyFields(model, { isBridgeOnline: () => isOnline }),
@@ -421,16 +485,28 @@ const modifyEditing = (
 const closedEditor = (model: Model) =>
   modifyFields(model, { presetEditor: () => PresetEditor.Closed() })
 
+const withEditedGroupLevel = (
+  levels: Model['groupLevels'],
+  target: Target,
+  setting: Setting,
+): Model['groupLevels'] =>
+  target._tag === 'Group' && setting._tag === 'Brightness'
+    ? Record.set(levels, target.name, setting.value)
+    : levels
+
 const updatedSetting = (
   model: Model,
   target: Target,
   setting: Setting,
 ): UpdateReturn => {
   const isThisDraft = isDraftFor(target, settingKindOf(setting))
+  const groupLevels = () =>
+    withEditedGroupLevel(model.groupLevels, target, setting)
   return Option.match(Array.findFirst(model.drafts, isThisDraft), {
     onNone: () => ({
       model: modifyFields(model, {
         drafts: drafts => [...drafts, { target, setting, isDirty: false }],
+        groupLevels,
       }),
       commands: settingCommands(target, setting),
     }),
@@ -440,6 +516,7 @@ const updatedSetting = (
           Array.map(drafts, draft =>
             isThisDraft(draft) ? { target, setting, isDirty: true } : draft,
           ),
+        groupLevels,
       }),
     }),
   })
@@ -678,6 +755,7 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     lights: [],
     groups: [],
     states: {},
+    groupLevels: {},
     presets: [],
     drafts: [],
     maybeExpanded: Option.none(),

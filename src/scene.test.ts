@@ -51,6 +51,7 @@ const loaded: Model = {
     'Living Room Orb': on,
     'Bedroom UFO': { ...on, power: 'OFF' },
   },
+  groupLevels: {},
   presets: [
     {
       name: 'Red',
@@ -67,6 +68,21 @@ const loaded: Model = {
 }
 
 describe('view', () => {
+  test('a group slider shows its stored level, not its brightest bulb', () => {
+    scene(
+      { update, view },
+      given({ ...loaded, groupLevels: { 'All Lights': 60 } }),
+      expect(role('slider', { name: 'All Lights brightness' })).toHaveAttr(
+        'aria-valuenow',
+        '60',
+      ),
+      expect(role('slider', { name: 'Living Room Orb brightness' })).toHaveAttr(
+        'aria-valuenow',
+        '120',
+      ),
+    )
+  })
+
   test('shows a waiting state before any lights arrive', () => {
     scene(
       { update, view },

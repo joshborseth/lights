@@ -98,11 +98,6 @@ export type Engine = Readonly<{
   checkNow: Effect.Effect<void>
   pollOnce: Effect.Effect<void>
   waitForFlashToFinish: Effect.Effect<void>
-  withExclusiveLights: <A, E>(
-    effect: Effect.Effect<A, E>,
-  ) => Effect.Effect<A, E>
-  recordInfo: (text: string) => Effect.Effect<void>
-  reportProblem: (text: string) => Effect.Effect<void>
   run: Effect.Effect<void>
 }>
 
@@ -701,9 +696,6 @@ export const makeEngine = <E>(
       }),
       pollOnce,
       waitForFlashToFinish: flashLock.withPermits(1)(Effect.void),
-      withExclusiveLights: flashLock.withPermits(1),
-      recordInfo: text => logActivity('Info', text),
-      reportProblem: logProblem,
       run: Effect.all([pollLoop, probeLoop], {
         concurrency: 'unbounded',
         discard: true,

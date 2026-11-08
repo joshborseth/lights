@@ -17,7 +17,6 @@ export type StorePaths = Readonly<{
   seen: string
   activity: string
   mqttEnv: string
-  presence: string
 }>
 
 export const defaultPaths = (home: string): StorePaths => ({
@@ -26,7 +25,6 @@ export const defaultPaths = (home: string): StorePaths => ({
   seen: join(home, '.local/state/pr-merge-lights/seen.json'),
   activity: join(home, '.local/state/pr-merge-lights/activity.json'),
   mqttEnv: join(home, '.config/pr-merge-lights/mqtt.env'),
-  presence: join(home, '.config/pr-merge-lights/presence.json'),
 })
 
 const StoredControl = Schema.Struct({

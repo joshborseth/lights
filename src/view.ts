@@ -79,9 +79,7 @@ const SKELETON_LIGHT_COUNT = 3
 const SECTION = 'flex flex-col gap-3'
 const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
 const CAPTION = 'text-xs text-muted-foreground'
-const THUMB =
-  'h-5 w-3 rounded-full border-0 bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.25),0_1px_4px_rgb(0_0_0/0.4)] ring-white/40'
-const TRACK = 'rounded-lg bg-muted data-horizontal:h-9'
+const PRIMARY_GLOW_FILL = 'slider-fill [--glow:var(--primary)] [--level:0.6]'
 const COLOR_INPUT =
   'h-11 w-full cursor-pointer rounded-lg border border-input bg-transparent p-1 [&::-moz-color-swatch]:rounded-md [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-md [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0'
 
@@ -624,7 +622,7 @@ const targetControlsView = (
         `${name} brightness`,
         shownBrightness(model, target, status),
         formatPercent,
-        { filledTrackClass: 'bg-(--glow)' },
+        { filledTrackClass: 'slider-fill' },
         h,
       ),
       isOpen && hasColorControls
@@ -709,9 +707,7 @@ const sliderView = (
         value,
         ariaLabel: label,
         formatValue,
-        trackClass: classes.trackClass ?? TRACK,
-        filledTrackClass: classes.filledTrackClass,
-        thumbClass: THUMB,
+        ...classes,
       },
       h,
     ),
@@ -797,8 +793,7 @@ const temperatureSliderView = (
         value,
         mireds => `${mireds} mireds`,
         {
-          trackClass:
-            'rounded-lg bg-linear-to-r from-sky-200 via-orange-50 to-amber-400 data-horizontal:h-9',
+          trackClass: 'bg-linear-to-r from-sky-200 via-orange-50 to-amber-400',
           filledTrackClass: 'bg-transparent',
         },
         h,
@@ -1046,7 +1041,7 @@ const presetEditorView = (
                         'Preset brightness',
                         editing.brightness,
                         formatPercent,
-                        { filledTrackClass: 'bg-primary' },
+                        { filledTrackClass: PRIMARY_GLOW_FILL },
                         h,
                       ),
                     ],

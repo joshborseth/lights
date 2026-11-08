@@ -31,19 +31,21 @@ export type SliderAttributes = FoldkitSlider.SliderAttributes
 
 /** Upstream SliderPrimitive.Control string. */
 export const sliderRootClass =
-  'data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
+  'data-horizontal:h-6 data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col'
 
-/** Upstream SliderPrimitive.Track string. */
-export const sliderTrackClass = 'bg-muted rounded-full data-horizontal:h-1 data-horizontal:w-full data-vertical:h-full data-vertical:w-1 relative grow overflow-hidden select-none'
+/** A slim track. The `after:` layer stretches its pointer target to 44px tall. */
+export const sliderTrackClass =
+  'bg-white/12 rounded-full cursor-pointer data-horizontal:h-2 data-horizontal:w-full data-vertical:h-full data-vertical:w-2 relative grow select-none after:absolute data-horizontal:after:inset-x-0 data-horizontal:after:-inset-y-4.5 data-vertical:after:inset-y-0 data-vertical:after:-inset-x-4.5'
 
-/** Upstream SliderPrimitive.Indicator string. */
+/** Eases to values reported by the bulb, and tracks the pointer exactly mid-drag. */
 export const sliderFilledTrackClass =
-  'bg-primary select-none data-horizontal:h-full data-vertical:w-full'
+  'bg-primary rounded-full select-none data-horizontal:h-full data-vertical:w-full transition-[width] duration-200 ease-out data-dragging:transition-none motion-reduce:transition-none'
 
-/** Upstream SliderPrimitive.Thumb string. The disabled: variants are inert
- *  under foldkit (aria-/data- twins are inlined at style resolution). */
+/** A round knob sized by `THUMB_SIZE_PX` to match the power switch's knob. The
+ *  disabled: variants are inert under foldkit (aria-/data- twins are inlined at
+ *  style resolution). */
 export const sliderThumbClass =
-  'border-ring ring-ring/50 relative size-3 rounded-full border bg-white transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50'
+  'ring-white/15 relative cursor-grab rounded-full bg-white shadow-[0_1px_4px_rgb(0_0_0/0.45)] transition-[left,box-shadow,scale] duration-200 ease-out hover:ring-4 focus-visible:ring-4 focus-visible:ring-ring focus-visible:outline-hidden data-dragging:scale-110 data-dragging:ring-6 data-dragging:transition-[box-shadow,scale] motion-reduce:transition-none aria-disabled:pointer-events-none aria-disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50'
 
 export const sliderLabelClass = 'text-sm font-medium'
 
@@ -54,7 +56,8 @@ export const sliderRowClass = 'flex flex-col gap-2 w-full'
 export const sliderHeaderClass = 'flex items-center justify-between'
 
 const LEFT_MOUSE_BUTTON = 0
-const THUMB_SIZE = '0.75rem'
+const THUMB_SIZE_PX = 24
+const THUMB_SIZE = `${String(THUMB_SIZE_PX)}px`
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max)
@@ -102,8 +105,9 @@ export const valueFromPointer = (
     const fraction = clamp(1 - (clientY - rect.top) / rect.height, 0, 1)
     return min + fraction * (max - min)
   }
-  if (rect.width === 0) return min
-  const fraction = clamp((clientX - rect.left) / rect.width, 0, 1)
+  const thumbTravel = rect.width - THUMB_SIZE_PX
+  if (thumbTravel <= 0) return min
+  const fraction = clamp((clientX - rect.left - THUMB_SIZE_PX / 2) / thumbTravel, 0, 1)
   return min + fraction * (max - min)
 }
 
@@ -249,6 +253,8 @@ const thumbStyle = (
       bottom: percentString(fraction),
       left: '50%',
       transform: 'translateX(-50%) translateY(-50%)',
+      width: THUMB_SIZE,
+      height: THUMB_SIZE,
       'touch-action': 'none',
     }
   }
@@ -256,6 +262,8 @@ const thumbStyle = (
   return {
     position: 'absolute',
     left: `calc((100% - ${THUMB_SIZE}) * ${fraction})`,
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
     'touch-action': 'none',
   }
 }

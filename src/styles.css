@@ -228,3 +228,16 @@
   --spinner-track: transparent;
   --spinner-arc: var(--foreground);
 }
+
+@utility slider-fill {
+  background-image: linear-gradient(
+    to right,
+    oklch(from var(--glow) calc(l * 0.55) c h),
+    var(--glow)
+  );
+  --tw-shadow: 0 0 14px -1px
+    color-mix(in oklch, var(--glow) calc(var(--level) * 75%), transparent);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000),
+    var(--tw-shadow);
+}

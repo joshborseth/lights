@@ -8,6 +8,7 @@ import {
   subscriptions,
   update,
 } from './main'
+import { startServiceWorker } from './pwa'
 import { view } from './view'
 
 const application = Runtime.makeApplication({
@@ -24,3 +25,7 @@ const application = Runtime.makeApplication({
 })
 
 Runtime.run(application)
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  startServiceWorker(navigator.serviceWorker)
+}

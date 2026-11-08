@@ -1,5 +1,6 @@
 import {
   Array,
+  Clock,
   Duration,
   Effect,
   Match,
@@ -59,6 +60,7 @@ const SETTING_THROTTLE_MS = 400
 const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
 const AUTOMATIONS_REFRESH_MS = 5000
+const SUSPECT_SOCKET_AFTER_HIDDEN_MS = 5000
 const SLIDER_STEP = 1
 const DRAFT_SETTLE_TIMEOUT_MS = 1500
 const POWER_CONFIRM_TIMEOUT_MS = 5000
@@ -195,6 +197,7 @@ export const Message = defineMessageUnion({
   FailedAcquireSocket: { error: Schema.String },
   ClosedSocket: {},
   CompletedWaitToReconnect: {},
+  ResumedApp: { hiddenForMs: Schema.Number },
   ReceivedFrame: { frame: IncomingFrame },
   ClickedPower: { target: Target },
   ClickedExpand: { target: Target },
@@ -1018,6 +1021,20 @@ export const update = (model: Model, message: Message) =>
         Match.orElse(() => ({ model })),
       ),
 
+    ResumedApp: ({ hiddenForMs }) =>
+      Connection.match<UpdateReturn>(model.connection, {
+        Connecting: () => ({ model }),
+        Connected: () =>
+          hiddenForMs >= SUSPECT_SOCKET_AFTER_HIDDEN_MS
+            ? startReconnectWait(model)
+            : { model },
+        WaitingToReconnect: () => ({
+          model: modifyFields(model, {
+            connection: () => Connection.Connecting({ attempt: 0 }),
+          }),
+        }),
+      }),
+
     ReceivedFrame: ({ frame }) => ({
       model: withStartupSettled(applyFrame(model, frame)),
     }),
@@ -1451,11 +1468,41 @@ const streamSocketMessages = (socket: WebSocket) =>
     ).pipe(Effect.flatMap(() => Effect.never)),
   )
 
+// NOTE: A phone can suspend the app without closing the socket, so a socket
+// that looks connected after a long absence may be dead. A resume reports how
+// long the app was hidden, so update can decide whether to trust it.
+const streamResumes: Stream.Stream<typeof Message.ResumedApp.Type> =
+  Stream.fromEventListener(document, 'visibilitychange').pipe(
+    Stream.mapEffect(() => Clock.currentTimeMillis),
+    Stream.mapAccum(
+      () => Option.none<number>(),
+      (maybeHiddenAt, now) =>
+        document.visibilityState === 'hidden'
+          ? [Option.some(now), []]
+          : [
+              Option.none<number>(),
+              Option.match(maybeHiddenAt, {
+                onNone: () => [],
+                onSome: hiddenAt => [
+                  Message.ResumedApp({ hiddenForMs: now - hiddenAt }),
+                ],
+              }),
+            ],
+    ),
+  )
+
 const socketSubscriptions = Subscription.make<
   Model,
   Message,
   Z2mSocketService
 >()(entry => ({
+  appResumes: entry(
+    {},
+    {
+      modelToDependencies: () => ({}),
+      dependenciesToStream: () => streamResumes,
+    },
+  ),
   automationsRefresh: entry(
     { isOpen: Schema.Boolean },
     {

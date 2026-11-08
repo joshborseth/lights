@@ -47,7 +47,7 @@ const CAPTION = 'text-xs text-muted-foreground'
 const FIELD_LABEL = 'text-sm text-muted-foreground'
 const GROUP_LABEL = 'text-xs font-semibold text-muted-foreground'
 const INPUT =
-  'w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground'
+  'w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base text-foreground sm:text-sm'
 const QUIET_BUTTON =
   'rounded-lg bg-secondary px-3 py-2 text-sm text-secondary-foreground hover:bg-secondary/80 disabled:opacity-40'
 const PRIMARY_BUTTON =
@@ -1911,7 +1911,7 @@ const saveBarView = (
   return h.div(
     [
       h.Class(
-        'sticky bottom-3 flex flex-col gap-2 rounded-xl bg-popover p-3 ring-1 ring-foreground/10',
+        'sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] flex flex-col gap-2 rounded-xl bg-popover p-3 ring-1 ring-foreground/10',
       ),
     ],
     [

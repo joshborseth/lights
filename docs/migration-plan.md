@@ -39,6 +39,8 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 - The screen is one tree built from Zigbee2MQTT's groups: a group nests under the smallest group that fully contains it. A group that cuts across the tree, such as one spanning two rooms, is listed separately. Every level has the same controls.
 - The UI uses [foldcn](https://foldcn.elianiva.com) components, copied into `src/components/ui/`. Its Slider handles brightness and temperature with large touch targets. Only the slider being dragged keeps state, in `maybeActiveSlider`, so no bulb needs its own Slider Submodel. Foldcn has no color picker, so color stays a native input.
 
+The app installs to a phone's home screen as a PWA. `pwa/service-worker.js` caches only the app's own built files, so the app opens without the tailnet and then reports that it cannot connect. It never touches `/api` or `/automations`, and it never queues a command. The build generates `sw.js` from it. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
+
 The app has two tabs, Lights and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
 
 The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.

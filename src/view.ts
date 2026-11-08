@@ -93,7 +93,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       h.div(
         [
           h.Class(
-            'mx-auto flex max-w-xl flex-col gap-8 px-4 pt-[max(env(safe-area-inset-top),2rem)] pb-16',
+            'mx-auto flex max-w-xl flex-col gap-8 pt-[max(calc(env(safe-area-inset-top)+0.75rem),2rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-[calc(env(safe-area-inset-bottom)+4rem)] pl-[max(env(safe-area-inset-left),1rem)]',
           ),
         ],
         [headerView(model, h), problemView(model, h), tabsView(model, h)],
@@ -362,7 +362,7 @@ const unreachableView = (h: HtmlBuilder<Message>): Html =>
           Empty.title<Message>({}, ["Can't reach Zigbee2MQTT"], h),
           Empty.description<Message>(
             {},
-            ['Still trying. This page will pick up as soon as it answers.'],
+            ['Still trying. Check that this device is connected to Tailscale.'],
             h,
           ),
         ],

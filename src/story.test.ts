@@ -191,6 +191,58 @@ describe('connection', () => {
     )
   })
 
+  test('a long absence replaces a socket that looks connected', () => {
+    story(
+      update,
+      given({ ...base, connection: Connection.Connected() }),
+      message(Message.ResumedApp({ hiddenForMs: 60_000 })),
+      model(next => {
+        expect(next.connection._tag).toBe('WaitingToReconnect')
+      }),
+      Command.expectExact(WaitToReconnect({ delayMs: 500 })),
+      Command.resolve(WaitToReconnect, Message.CompletedWaitToReconnect()),
+      model(next => {
+        expect(next.connection._tag).toBe('Connecting')
+      }),
+    )
+  })
+
+  test('a brief absence keeps the socket', () => {
+    story(
+      update,
+      given({ ...base, connection: Connection.Connected() }),
+      message(Message.ResumedApp({ hiddenForMs: 1000 })),
+      model(next => {
+        expect(next.connection._tag).toBe('Connected')
+      }),
+    )
+  })
+
+  test('resuming skips the remaining backoff', () => {
+    story(
+      update,
+      given({
+        ...base,
+        connection: Connection.WaitingToReconnect({ attempt: 6 }),
+      }),
+      message(Message.ResumedApp({ hiddenForMs: 1000 })),
+      model(next => {
+        expect(next.connection).toEqual(Connection.Connecting({ attempt: 0 }))
+      }),
+    )
+  })
+
+  test('resuming leaves a connection in progress alone', () => {
+    story(
+      update,
+      given({ ...base, connection: Connection.Connecting({ attempt: 3 }) }),
+      message(Message.ResumedApp({ hiddenForMs: 60_000 })),
+      model(next => {
+        expect(next.connection).toEqual(Connection.Connecting({ attempt: 3 }))
+      }),
+    )
+  })
+
   test('a late close does not start a second wait', () => {
     story(
       update,

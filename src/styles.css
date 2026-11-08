@@ -170,6 +170,24 @@
   }
   html {
     @apply font-sans;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 40;
+    height: env(safe-area-inset-top);
+    background: var(--background);
+  }
+  button,
+  label {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   [data-leave] {
     --tw-animation-fill-mode: both;

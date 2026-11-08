@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="glow" cx="256" cy="216" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffb648" stop-opacity="0.55" />
+      <stop offset="0.55" stop-color="#ff9a2e" stop-opacity="0.14" />
+      <stop offset="1" stop-color="#ff9a2e" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="bulb" x1="0" y1="112" x2="0" y2="347" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe6ae" />
+      <stop offset="1" stop-color="#ffb648" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="#0e0c0a" />
+  <rect width="512" height="512" fill="url(#glow)" />
+  <path
+    fill="url(#bulb)"
+    d="M256 112a104 104 0 0 0-62 187.5c14 10.5 22 24 22 38.5v9h80v-9c0-14.5 8-28 22-38.5A104 104 0 0 0 256 112Z"
+  />
+  <rect x="216" y="361" width="80" height="18" rx="9" fill="#c9a667" />
+  <rect x="230" y="391" width="52" height="18" rx="9" fill="#c9a667" />
+</svg>

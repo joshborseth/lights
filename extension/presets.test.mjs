@@ -31,13 +31,42 @@ const seed = {
   },
 }
 
+const device = (name, type = 'light') => ({
+  name,
+  definition: {},
+  isDevice: () => true,
+  isGroup: () => false,
+  exposes: () => [{ type }],
+})
+const group = (name, members) => ({
+  name,
+  isDevice: () => false,
+  isGroup: () => true,
+  membersDevices: () => members,
+  hasMember: candidate => members.includes(candidate),
+})
+
+const orb = device('Orb')
+const ufo = device('Bedroom UFO')
+const plug = device('Plug', 'switch')
+const groups = [
+  group('All Lights', [orb, ufo]),
+  group('Rest of the House', [orb]),
+  group('Bedroom', [ufo]),
+]
+const entities = [orb, ufo, plug, ...groups]
+const zigbee = {
+  resolveEntity: name => entities.find(entity => entity.name === name),
+  groupsIterator: () => groups.values(),
+}
+
 const make = () => {
   const mqtt = { publish: vi.fn(async () => undefined) }
   const eventBus = { onMQTTMessage: vi.fn(), removeListeners: vi.fn() }
   const logger = { info: vi.fn(), error: vi.fn() }
   const settings = { get: () => ({ mqtt: { base_topic: 'zigbee2mqtt' } }) }
   const extension = new LightPresets(
-    null,
+    zigbee,
     mqtt,
     null,
     null,
@@ -105,6 +134,128 @@ describe('applying', () => {
     await send(extension, 'preset/set', { name: 'Full red', group: 'Bedroom' })
     expect(mqtt.publish).not.toHaveBeenCalled()
     expect(logger.error).toHaveBeenCalled()
+  })
+})
+
+describe('applying to one bulb', () => {
+  test('sends the preset to that bulb', async () => {
+    const { extension, mqtt } = make()
+    await send(extension, 'preset/set', { name: 'Full red', light: 'Orb' })
+    expect(mqtt.publish.mock.calls).toEqual([
+      [
+        'Orb/set',
+        JSON.stringify({
+          state: 'ON',
+          brightness: 254,
+          color: { hex: '#FF0000' },
+        }),
+        { skipReceive: false },
+      ],
+    ])
+  })
+
+  test('accepts a bulb in the Bedroom group', async () => {
+    const { extension, mqtt } = make()
+    await send(extension, 'preset/set', {
+      name: 'Full red',
+      light: 'Bedroom UFO',
+    })
+    expect(mqtt.publish.mock.calls[0][0]).toBe('Bedroom UFO/set')
+  })
+
+  test.each([
+    ['a group name', { light: 'Bedroom' }],
+    ['an unknown name', { light: 'bridge/request/permit_join' }],
+    ['a device that is not a light', { light: 'Plug' }],
+    ['a non-string name', { light: 7 }],
+    ['both a light and a group', { light: 'Orb', group: 'All Lights' }],
+  ])('refuses %s', async (_label, target) => {
+    const { extension, mqtt, logger } = make()
+    await send(extension, 'preset/set', { name: 'Full red', ...target })
+    expect(mqtt.publish).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalled()
+  })
+})
+
+describe('rainbow loops', () => {
+  const start = async (extension, target) => {
+    await send(extension, 'preset/set', { name: 'Rainbow', ...target })
+    return extension
+  }
+  const isLooping = (extension, name) =>
+    extension.loopState(name).active != null
+
+  test('a bulb can run its own loop', async () => {
+    const { extension, mqtt } = make()
+    await start(extension, { light: 'Orb' })
+    expect(mqtt.publish.mock.calls[0][0]).toBe('Orb/set')
+    expect(isLooping(extension, 'Orb')).toBe(true)
+    extension.stop()
+  })
+
+  test('its own frames do not stop a bulb loop', async () => {
+    const { extension } = make()
+    await start(extension, { light: 'Orb' })
+    await send(extension, 'Orb/set', { color: { hex: '#FF0000' } })
+    expect(isLooping(extension, 'Orb')).toBe(true)
+    extension.stop()
+  })
+
+  test('another command to the bulb stops its loop', async () => {
+    const { extension } = make()
+    await start(extension, { light: 'Orb' })
+    await send(extension, 'Orb/set', { state: 'OFF' })
+    expect(isLooping(extension, 'Orb')).toBe(false)
+  })
+
+  test('a command to any group stops loops on its bulbs', async () => {
+    const { extension } = make()
+    await start(extension, { light: 'Bedroom UFO' })
+    await send(extension, 'Bedroom/set', { state: 'OFF' })
+    expect(isLooping(extension, 'Bedroom UFO')).toBe(false)
+  })
+
+  test('a group preset stops loops on its bulbs', async () => {
+    const { extension } = make()
+    await start(extension, { light: 'Orb' })
+    await send(extension, 'preset/set', {
+      name: 'Full red',
+      group: 'All Lights',
+    })
+    expect(isLooping(extension, 'Orb')).toBe(false)
+  })
+
+  test('a bulb preset stops loops on groups that contain it', async () => {
+    const { extension } = make()
+    await start(extension, { group: 'Rest of the House' })
+    await send(extension, 'preset/set', { name: 'Full red', light: 'Orb' })
+    expect(isLooping(extension, 'Rest of the House')).toBe(false)
+  })
+
+  test('a bulb preset leaves other loops running', async () => {
+    const { extension } = make()
+    await start(extension, { light: 'Orb' })
+    await send(extension, 'preset/set', {
+      name: 'Full red',
+      light: 'Bedroom UFO',
+    })
+    expect(isLooping(extension, 'Orb')).toBe(true)
+    extension.stop()
+  })
+
+  test('a loop stops when its bulb disappears', async () => {
+    vi.useFakeTimers()
+    const { extension, mqtt, logger } = make()
+    const removed = device('Removed')
+    entities.push(removed)
+    await start(extension, { light: 'Removed' })
+    entities.pop()
+    mqtt.publish.mockClear()
+    await vi.advanceTimersByTimeAsync(5000)
+    vi.useRealTimers()
+    expect(mqtt.publish).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalled()
+    expect(isLooping(extension, 'Removed')).toBe(false)
   })
 })
 

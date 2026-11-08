@@ -2,8 +2,9 @@
 // to the group that was asked, so bulbs that cannot store a Zigbee scene still
 // follow. Rainbow cannot be stored as a Zigbee scene, so the coordinator cycles
 // hue on that group until another preset or a manual command takes over.
-// Bedroom is intentionally absent: recalling a scene on Rest of the House must
-// not address the bedroom lights.
+// Bedroom is intentionally absent from the groups: recalling a scene on Rest of
+// the House must not address the bedroom lights. A preset can still go to any
+// single bulb, named with `light` instead of `group`.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 
 const PRESETS_FILE = process.env.LIGHTS_PRESETS_FILE ?? '/app/data/presets.json'
@@ -28,6 +29,7 @@ export default class LightPresets {
     settings,
     logger,
   ) {
+    this.zigbee = zigbee
     this.mqtt = mqtt
     this.eventBus = eventBus
     this.logger = logger
@@ -80,12 +82,14 @@ export default class LightPresets {
     }
     const base = this.baseTopic()
     if (topic === `${base}/preset/set` && body.name) {
-      const group = body.group ?? NAMED_PRESET_GROUP
-      if (!PRESET_GROUPS.includes(group)) {
-        this.logger.error(`Refusing to apply a preset to ${group}`)
+      const target = this.presetTarget(body)
+      if (target === null) {
+        this.logger.error(
+          `Refusing to apply a preset to ${body.light ?? body.group}`,
+        )
         return
       }
-      await this.apply(group, body.name)
+      await this.apply(target, body.name)
       return
     }
     if (topic === `${base}/preset/save`) {
@@ -96,29 +100,69 @@ export default class LightPresets {
       await this.remove(body)
       return
     }
-    const group = this.groupFromSetTopic(topic)
-    if (!group) {
+    const target = this.entityNameFromSetTopic(topic)
+    if (!target) {
       return
     }
-    if (body.scene_recall != null) {
+    if (PRESET_GROUPS.includes(target) && body.scene_recall != null) {
       const { bySceneId } = this.loadPresets()
       const name = bySceneId[String(body.scene_recall)]
       if (name) {
-        await this.apply(group, name)
-      } else if (this.loopState(group).active != null) {
-        this.stopLoop(group)
+        await this.apply(target, name)
+      } else {
+        this.stopCommandedLoops(target)
       }
       return
     }
-    if (this.loopState(group).active != null && !this.ownEcho(group, body)) {
-      this.logger.info(
-        `Stopping rainbow loop on ${group} because the group received another command`,
-      )
-      this.stopLoop(group)
+    if (!this.ownEcho(target, body)) {
+      this.stopCommandedLoops(target)
     }
   }
 
-  groupFromSetTopic(topic) {
+  presetTarget(body) {
+    if (body.light === undefined) {
+      const group = body.group ?? NAMED_PRESET_GROUP
+      return PRESET_GROUPS.includes(group) ? group : null
+    }
+    return body.group === undefined && this.isLight(body.light)
+      ? body.light
+      : null
+  }
+
+  isLight(name) {
+    if (typeof name !== 'string') {
+      return false
+    }
+    const entity = this.zigbee.resolveEntity(name)
+    return (
+      entity?.isDevice() === true &&
+      entity.name === name &&
+      entity.definition != null &&
+      entity.exposes().some(expose => expose.type === 'light')
+    )
+  }
+
+  isPresetTarget(name) {
+    return PRESET_GROUPS.includes(name) || this.isLight(name)
+  }
+
+  memberNames(name) {
+    const entity = this.zigbee.resolveEntity(name)
+    return entity?.isGroup()
+      ? [...entity.membersDevices()].map(device => device.name)
+      : []
+  }
+
+  groupNamesContaining(name) {
+    const entity = this.zigbee.resolveEntity(name)
+    return entity?.isDevice()
+      ? [...this.zigbee.groupsIterator()]
+          .filter(group => group.hasMember(entity))
+          .map(group => group.name)
+      : []
+  }
+
+  entityNameFromSetTopic(topic) {
     const base = this.baseTopic()
     const prefix = `${base}/`
     const suffix = '/set'
@@ -126,7 +170,7 @@ export default class LightPresets {
       return null
     }
     const name = topic.slice(prefix.length, -suffix.length)
-    return PRESET_GROUPS.includes(name) ? name : null
+    return this.zigbee.resolveEntity(name)?.name ?? null
   }
 
   readRaw() {
@@ -210,8 +254,8 @@ export default class LightPresets {
     await this.publishList()
   }
 
-  async apply(group, name) {
-    this.stopLoop(group)
+  async apply(target, name) {
+    this.stopOverlappingLoops(target)
     const { byName } = this.loadPresets()
     const preset = byName[name]
     if (!preset) {
@@ -219,13 +263,13 @@ export default class LightPresets {
       return
     }
     if (preset.loop?.type === 'rainbow') {
-      const loop = this.loopState(group)
+      const loop = this.loopState(target)
       const generation = loop.generation
       loop.active = generation
       this.logger.info(
-        `Applying light preset '${name}' to ${group} from the coordinator`,
+        `Applying light preset '${name}' to ${target} from the coordinator`,
       )
-      await this.runRainbow(group, preset, generation)
+      await this.runRainbow(target, preset, generation)
       return
     }
     const payload = {
@@ -241,12 +285,12 @@ export default class LightPresets {
       payload.color_temp = preset.color_temp
     }
     this.logger.info(
-      `Applying light preset '${name}' to ${group} from the coordinator`,
+      `Applying light preset '${name}' to ${target} from the coordinator`,
     )
-    await this.publish(group, payload)
+    await this.publish(target, payload)
   }
 
-  async runRainbow(group, preset, generation) {
+  async runRainbow(target, preset, generation) {
     // IKEA color bulbs freeze and drop new colors until a fade finishes.
     // Any transition above 0 starts that freeze, and a step faster than
     // the bulb can apply looks like the light is stuck. Color only, no fade.
@@ -255,12 +299,17 @@ export default class LightPresets {
     let hue = 0
     let primed = false
     const tick = async () => {
-      const loop = this.loopState(group)
+      const loop = this.loopState(target)
       if (loop.generation !== generation) {
         return
       }
+      if (!this.isPresetTarget(target)) {
+        this.logger.error(`Stopping rainbow loop on missing light ${target}`)
+        this.stopLoop(target)
+        return
+      }
       const hex = hueToHex(hue)
-      this.rememberHex(group, hex)
+      this.rememberHex(target, hex)
       const payload = { color: { hex } }
       if (!primed) {
         payload.state = preset.state ?? 'ON'
@@ -268,33 +317,33 @@ export default class LightPresets {
         primed = true
       }
       try {
-        await this.publish(group, payload)
+        await this.publish(target, payload)
       } catch (error) {
-        this.logger.error(`Rainbow frame failed on ${group}: ${error}`)
+        this.logger.error(`Rainbow frame failed on ${target}: ${error}`)
       }
-      if (this.loopState(group).generation !== generation) {
+      if (this.loopState(target).generation !== generation) {
         return
       }
       hue = (hue + step) % 360
       loop.timer = setTimeout(tick, interval)
     }
     this.logger.info(
-      `Rainbow loop on ${group}: ${step} degrees every ${interval}ms`,
+      `Rainbow loop on ${target}: ${step} degrees every ${interval}ms`,
     )
     await tick()
   }
 
-  loopState(group) {
-    let loop = this.loops.get(group)
+  loopState(target) {
+    let loop = this.loops.get(target)
     if (!loop) {
       loop = { generation: 0, active: null, timer: null, recentHex: [] }
-      this.loops.set(group, loop)
+      this.loops.set(target, loop)
     }
     return loop
   }
 
-  stopLoop(group) {
-    const loop = this.loopState(group)
+  stopLoop(target) {
+    const loop = this.loopState(target)
     loop.generation += 1
     loop.active = null
     if (loop.timer) {
@@ -303,29 +352,53 @@ export default class LightPresets {
     }
   }
 
-  rememberHex(group, hex) {
-    const recent = this.loopState(group).recentHex
+  // A loop on an overlapping group or bulb would repaint this target on its
+  // next frame, so a preset has to end those loops to stick.
+  stopOverlappingLoops(target) {
+    for (const name of [
+      target,
+      ...this.memberNames(target),
+      ...this.groupNamesContaining(target),
+    ]) {
+      this.stopLoop(name)
+    }
+  }
+
+  stopCommandedLoops(target) {
+    for (const name of [target, ...this.memberNames(target)]) {
+      if (this.loops.get(name)?.active != null) {
+        this.logger.info(
+          `Stopping rainbow loop on ${name} because ${target} received another command`,
+        )
+        this.stopLoop(name)
+      }
+    }
+  }
+
+  rememberHex(target, hex) {
+    const recent = this.loopState(target).recentHex
     recent.push(hex)
     if (recent.length > 48) {
       recent.shift()
     }
   }
 
-  ownEcho(group, body) {
+  ownEcho(target, body) {
     const hex = body?.color?.hex
-    if (typeof hex !== 'string') {
+    const loop = this.loops.get(target)
+    if (typeof hex !== 'string' || loop?.active == null) {
       return false
     }
-    return this.loopState(group).recentHex.includes(hex.toUpperCase())
+    return loop.recentHex.includes(hex.toUpperCase())
   }
 
-  async publish(group, payload) {
-    if (!PRESET_GROUPS.includes(group)) {
-      throw new Error(`Refusing to publish a preset to ${group}`)
+  async publish(target, payload) {
+    if (!this.isPresetTarget(target)) {
+      throw new Error(`Refusing to publish a preset to ${target}`)
     }
     this.applying = true
     try {
-      await this.mqtt.publish(`${group}/set`, JSON.stringify(payload), {
+      await this.mqtt.publish(`${target}/set`, JSON.stringify(payload), {
         skipReceive: false,
       })
     } finally {

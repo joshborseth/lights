@@ -126,20 +126,68 @@ describe('view', () => {
     )
   })
 
+  test('offers each bulb its presets once it is expanded', () => {
+    scene(
+      { update, view },
+      given(loaded),
+      expect(role('button', { name: 'Red on Bedroom UFO' })).not.toExist(),
+      click(role('button', { name: 'Bedroom UFO color' })),
+      click(role('button', { name: 'Rainbow on Bedroom UFO' })),
+      Command.expectExact(
+        SendFrame({
+          frame: JSON.stringify({
+            topic: 'preset/set',
+            payload: { name: 'Rainbow', light: 'Bedroom UFO' },
+          }),
+        }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+    )
+  })
+
+  test('hides presets a bulb cannot show', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        lights: [
+          {
+            ...light('Living Room Orb', 'a'),
+            supportsColor: false,
+          },
+        ],
+        presets: [
+          ...loaded.presets,
+          {
+            name: 'Warm',
+            brightness: 200,
+            look: PresetLook.White({ colorTemp: 370 }),
+          },
+        ],
+      }),
+      click(role('button', { name: 'Living Room Orb color' })),
+      expect(role('button', { name: 'Warm on Living Room Orb' })).toExist(),
+      expect(role('button', { name: 'Red on Living Room Orb' })).not.toExist(),
+      expect(
+        role('button', { name: 'Rainbow on Living Room Orb' }),
+      ).not.toExist(),
+    )
+  })
+
   test('clicking a bulb sends its power command', () => {
     scene(
       { update, view },
       given(loaded),
       click(role('switch', { name: 'Bedroom UFO power' })),
       Command.expectExact(
-        SendFrame({
+        SendFrameTwice({
           frame: JSON.stringify({
             topic: 'Bedroom UFO/set',
             payload: { state: 'ON' },
           }),
         }),
       ),
-      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
     )
   })
 

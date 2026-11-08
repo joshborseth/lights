@@ -197,15 +197,15 @@ describe('frames', () => {
 })
 
 describe('power', () => {
-  test('a light gets one exact power command', () => {
+  test('a light gets its exact power command, sent twice', () => {
     story(
       update,
       given(base),
       message(Message.ClickedPower({ target: orb })),
       Command.expectExact(
-        SendFrame({ frame: frameOf('Orb/set', { state: 'ON' }) }),
+        SendFrameTwice({ frame: frameOf('Orb/set', { state: 'ON' }) }),
       ),
-      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
     )
   })
 
@@ -571,7 +571,10 @@ describe('presets', () => {
       update,
       given(base),
       message(
-        Message.ClickedPreset({ group: 'Rest of the House', preset: 'Red' }),
+        Message.ClickedPreset({
+          target: Target.Group({ name: 'Rest of the House' }),
+          preset: 'Red',
+        }),
       ),
       Command.expectExact(
         SendFrame({
@@ -579,6 +582,20 @@ describe('presets', () => {
             name: 'Red',
             group: 'Rest of the House',
           }),
+        }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+    )
+  })
+
+  test('applying to a bulb names the light', () => {
+    story(
+      update,
+      given(base),
+      message(Message.ClickedPreset({ target: orb, preset: 'Red' })),
+      Command.expectExact(
+        SendFrame({
+          frame: frameOf('preset/set', { name: 'Red', light: 'Orb' }),
         }),
       ),
       Command.resolve(SendFrame, Message.SucceededSendFrame()),

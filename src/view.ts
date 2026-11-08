@@ -261,7 +261,7 @@ const groupCardView = (
                 h,
               ),
               PRESET_GROUPS.includes(group.name)
-                ? presetChipsView(model, group.name, h)
+                ? presetChipsView(model, target, status, h)
                 : h.empty,
             ],
             h,
@@ -310,7 +310,7 @@ const lightRowView = (
     [
       h.AriaLabel(light.name),
       glowAttribute(status, h),
-      h.Class('not-first:border-t border-border p-4'),
+      h.Class('not-first:border-t border-border flex flex-col gap-3 p-4'),
     ],
     [
       targetControlsView(
@@ -321,6 +321,9 @@ const lightRowView = (
         status,
         h,
       ),
+      isExpanded(model, target)
+        ? presetChipsView(model, target, status, h)
+        : h.empty,
     ],
   )
 }
@@ -565,9 +568,19 @@ const presetDotView = (
     h.Style({ background: presetSwatch(preset) }),
   ])
 
+const canShowPreset =
+  (status: TargetStatus) =>
+  (preset: Preset): boolean =>
+    PresetLook.match(preset.look, {
+      Color: () => status.supportsColor,
+      Rainbow: () => status.supportsColor,
+      White: () => Option.isSome(status.maybeColorTempRange),
+    })
+
 const presetChipsView = (
   model: Model,
-  group: string,
+  target: Target,
+  status: TargetStatus,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
@@ -576,7 +589,7 @@ const presetChipsView = (
         'no-scrollbar -mx-(--card-spacing) flex gap-2 overflow-x-auto px-(--card-spacing)',
       ),
     ],
-    Array.map(model.presets, preset =>
+    Array.map(Array.filter(model.presets, canShowPreset(status)), preset =>
       h.keyed('div')(
         preset.name,
         [],
@@ -584,9 +597,9 @@ const presetChipsView = (
           button<Message>(
             {
               variant: 'secondary',
-              onClick: Message.ClickedPreset({ group, preset: preset.name }),
+              onClick: Message.ClickedPreset({ target, preset: preset.name }),
               className: 'h-9 gap-2 rounded-full pr-3.5 pl-2.5',
-              attributes: [h.AriaLabel(`${preset.name} on ${group}`)],
+              attributes: [h.AriaLabel(`${preset.name} on ${target.name}`)],
             },
             [presetDotView(preset, 'size-3.5', h), preset.name],
             h,

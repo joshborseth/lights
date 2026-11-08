@@ -38,6 +38,7 @@ import {
   PresetLook,
   SavablePresetLook,
   Setting,
+  applyLightPresetFrame,
   applyPresetFrame,
   clampGroupLevel,
   decodeFrame,
@@ -143,7 +144,7 @@ export const Message = defineMessageUnion({
   CompletedThrottleWait: { target: Target, kind: SettingKind },
   GotSliderMessage: { sliderId: SliderId, message: Slider.Message },
   GotActiveSliderMessage: { message: Slider.Message },
-  ClickedPreset: { group: Schema.String, preset: Schema.String },
+  ClickedPreset: { target: Target, preset: Schema.String },
   ClickedNewPreset: {},
   ClickedEditPreset: { preset: Schema.String },
   UpdatedEditorName: { value: Schema.String },
@@ -601,15 +602,9 @@ export const update = (model: Model, message: Message) =>
 
     ClickedPower: ({ target }) => {
       const power: Power = targetStatus(model, target).isOn ? 'OFF' : 'ON'
-      const frame = powerFrame(target.name, power)
       return {
         model,
-        commands: [
-          Target.match(target, {
-            Light: () => SendFrame({ frame }),
-            Group: () => SendFrameTwice({ frame }),
-          }),
-        ],
+        commands: [SendFrameTwice({ frame: powerFrame(target.name, power) })],
       }
     },
 
@@ -658,9 +653,16 @@ export const update = (model: Model, message: Message) =>
       })
     },
 
-    ClickedPreset: ({ group, preset }) => ({
+    ClickedPreset: ({ target, preset }) => ({
       model,
-      commands: [SendFrame({ frame: applyPresetFrame(group, preset) })],
+      commands: [
+        SendFrame({
+          frame: Target.match(target, {
+            Light: ({ name }) => applyLightPresetFrame(name, preset),
+            Group: ({ name }) => applyPresetFrame(name, preset),
+          }),
+        }),
+      ],
     }),
 
     ClickedNewPreset: () => ({

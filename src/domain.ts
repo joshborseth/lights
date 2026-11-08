@@ -321,6 +321,9 @@ export const settingFrame = (name: string, setting: Setting): string =>
 export const applyPresetFrame = (group: string, name: string): string =>
   encodeFrame('preset/set', { name, group })
 
+export const applyLightPresetFrame = (light: string, name: string): string =>
+  encodeFrame('preset/set', { name, light })
+
 export const SavablePresetLook = defineTaggedUnion({
   Color: { hex: Schema.String },
   White: { colorTemp: Schema.Number },

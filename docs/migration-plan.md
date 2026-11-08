@@ -47,10 +47,12 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Off is exactly `{"state":"OFF"}`.** Any `transition` key, even 0, makes Zigbee2MQTT send a level-0 move instead, and several bulbs stay on at minimum brightness.
 - **Never send `transition` for color.** IKEA bulbs freeze and drop new colors until a fade finishes.
 - **Throttle sliders to one command per 400 ms, and always send the final value.** Faster updates get dropped.
-- **Apply presets with `preset/set` and `{"name": ..., "group": ...}`** on All Lights or Rest of the House. The extension refuses other groups.
-- **Bedroom has no presets, on purpose.** Do not offer them there.
-- **Any other command to a group stops its Rainbow loop.** That is the intended way to end it.
-- **Send group On and Off twice, 400 ms apart.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
+- **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for All Lights or Rest of the House, or `{"name": ..., "light": ...}` for one bulb. The extension refuses other groups, and any `light` that Zigbee2MQTT does not report as a light.
+- **The Bedroom group has no presets, on purpose.** Do not offer them there. Each bedroom bulb can still take a preset on its own.
+- **Offer a bulb only the presets it can show.** A Color or Rainbow preset needs color support, and a White preset needs color temperature.
+- **Any other command to a target stops its Rainbow loop.** That is the intended way to end it. A command to a group also stops loops on its member bulbs.
+- **A preset ends any Rainbow loop that overlaps its target.** Without this, the loop repaints the target on its next frame. A preset on one bulb stops a Rainbow on a group that contains it, and the other bulbs hold their last color.
+- **Send On and Off twice, 400 ms apart, for groups and bulbs.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
 - **Show reported state, not assumed state.** A slider may lead while dragging, but the next state frame from the bulb wins.
 - **A group slider keeps its own level.** It moves when dragged, and otherwise only when every bulb in the group, on or off, has ended up above it or below it. It then moves to the nearest bulb.
 
@@ -65,7 +67,7 @@ Windfront stays available until the cutover.
 - `extension/presets.mjs` is the source for the live extension. It adds a retained `preset/list` topic and `preset/save` and `preset/delete` commands, so preset editing needs no separate server.
 - Published on a tailnet-only port with Tailscale Serve, with `/api` proxied to Zigbee2MQTT. The WebSocket path was tested through Serve.
 
-Deploy the app with `scripts/deploy.sh`. Hot-load the extension with `node scripts/deploy-extension.mjs`.
+Deploy the app with `scripts/deploy.sh`. Hot-load the extension with `node scripts/deploy-extension.mjs`. When a change spans both, load the extension first: an older extension treats a bulb preset as a preset for All Lights.
 
 **Still to do:** the first run against real bulbs, with Josh watching. All testing so far used recorded frames and preset saves, so no light commands have been sent.
 

@@ -32,6 +32,7 @@ cd "$checkout"
 
 bun install --frozen-lockfile
 ./scripts/deploy.sh
+./scripts/deploy-automations.sh
 if [ "$with_extension" = true ]; then
   node scripts/deploy-extension.mjs
 fi

@@ -3,7 +3,9 @@ import { Command, given, message, model, story } from 'foldkit/story'
 import { describe, expect, test } from 'vitest'
 
 import * as Slider from '@/components/ui/slider'
+import { Tabs } from '@foldkit/ui'
 
+import * as Automations from './automations'
 import {
   IncomingFrame,
   type LightState,
@@ -46,6 +48,9 @@ const presets: ReadonlyArray<Preset> = [
 ]
 
 const base: Model = {
+  tab: 'Lights',
+  tabs: Tabs.init({ id: 'app-tabs' }),
+  automations: Automations.init,
   connection: Connection.Connected(),
   startup: Startup.Ready(),
   isBridgeOnline: true,

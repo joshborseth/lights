@@ -6,7 +6,11 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   test: {
-    include: ['src/**/*.{test,spec}.ts', 'extension/**/*.test.mjs'],
+    include: [
+      'src/**/*.{test,spec}.ts',
+      'service/**/*.test.ts',
+      'extension/**/*.test.mjs',
+    ],
     environment: 'happy-dom',
     setupFiles: ['./src/vitest-setup.ts'],
     server: {

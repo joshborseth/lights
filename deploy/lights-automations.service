@@ -1,0 +1,14 @@
+[Unit]
+Description=Lights app automations: PR merge flash, schedule, and health
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=%h
+ExecStart=/usr/local/bin/bun %h/.local/share/lights-automations/service.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

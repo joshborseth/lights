@@ -23,7 +23,9 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 
 import * as Slider from '@/components/ui/slider'
+import { Tabs } from '@foldkit/ui'
 
+import * as Automations from './automations'
 import {
   type ColorTempRange,
   DEFAULT_COLOR_TEMP,
@@ -55,6 +57,7 @@ const BASE_RECONNECT_DELAY_MS = 500
 const SETTING_THROTTLE_MS = 400
 const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
+const AUTOMATIONS_REFRESH_MS = 5000
 const SLIDER_STEP = 1
 const DRAFT_SETTLE_TIMEOUT_MS = 1500
 const POWER_CONFIRM_TIMEOUT_MS = 5000
@@ -152,7 +155,15 @@ export const PresetEditor = defineTaggedUnion({
 })
 export type PresetEditor = typeof PresetEditor.Type
 
+export const AppTab = Schema.Literals(['Lights', 'Automations'])
+export type AppTab = typeof AppTab.Type
+
+export const AppTabs = Tabs.create<AppTab>()
+
 export const Model = Schema.Struct({
+  tab: AppTab,
+  tabs: Tabs.Model,
+  automations: Automations.Model,
   connection: Connection,
   startup: Startup,
   isBridgeOnline: Schema.Boolean,
@@ -174,6 +185,8 @@ export type Model = typeof Model.Type
 // MESSAGE
 
 export const Message = defineMessageUnion({
+  GotTabsMessage: { message: Tabs.Message },
+  GotAutomationsMessage: { message: Automations.Message },
   AcquiredSocket: {},
   ReleasedSocket: {},
   FailedAcquireSocket: { error: Schema.String },
@@ -774,6 +787,31 @@ const modifyEditing = (
 const closedEditor = (model: Model) =>
   modifyFields(model, { presetEditor: () => PresetEditor.Closed() })
 
+const foldTabsOutMessage = Tabs.OutMessage.match<
+  Update.Step<Model, Message, Z2mSocketService>,
+  Tabs.OutMessage<AppTab>
+>({
+  Selected:
+    ({ value }) =>
+    model => ({ model: modifyFields(model, { tab: () => value }) }),
+})
+
+const foldTabs = Update.foldChild({
+  update: AppTabs.update,
+  read: (model: Model) => Option.some(model.tabs),
+  write: (model, nextTabs) => modifyFields(model, { tabs: () => nextTabs }),
+  toParentMessage: message => Message.GotTabsMessage({ message }),
+  foldOutMessage: foldTabsOutMessage,
+})
+
+const foldAutomations = Update.foldChild({
+  update: Automations.update,
+  read: (model: Model) => Option.some(model.automations),
+  write: (model, nextAutomations) =>
+    modifyFields(model, { automations: () => nextAutomations }),
+  toParentMessage: message => Message.GotAutomationsMessage({ message }),
+})
+
 const withEditedGroupLevel = (
   levels: Model['groupLevels'],
   target: Target,
@@ -914,6 +952,10 @@ const foldSliderMessage = (sliderId: SliderId) =>
 
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
+    GotTabsMessage: ({ message }) => foldTabs(model, message),
+
+    GotAutomationsMessage: ({ message }) => foldAutomations(model, message),
+
     AcquiredSocket: () => ({
       model: modifyFields(model, {
         connection: () => Connection.Connected(),
@@ -1184,6 +1226,9 @@ export const update = (model: Model, message: Message) =>
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: {
+    tab: 'Lights',
+    tabs: Tabs.init({ id: 'app-tabs' }),
+    automations: Automations.init,
     connection: Connection.Connecting({ attempt: 0 }),
     startup: Startup.Loading({ missing: ['Lights', 'Groups', 'Presets'] }),
     isBridgeOnline: true,
@@ -1372,6 +1417,19 @@ const socketSubscriptions = Subscription.make<
   Message,
   Z2mSocketService
 >()(entry => ({
+  automationsRefresh: entry(
+    { isOpen: Schema.Boolean },
+    {
+      modelToDependencies: model => ({ isOpen: model.tab === 'Automations' }),
+      dependenciesToStream: ({ isOpen }) =>
+        Stream.when(
+          Automations.refreshTicks(AUTOMATIONS_REFRESH_MS).pipe(
+            Stream.map(message => Message.GotAutomationsMessage({ message })),
+          ),
+          Effect.sync(() => isOpen),
+        ),
+    },
+  ),
   socketFrames: entry(
     { isConnected: Schema.Boolean },
     {

@@ -6,7 +6,7 @@ Foldkit owns `FOLDKIT.md` and replaces it whole on upgrade. This file is yours. 
 
 `FOLDKIT.md` reads the line below to decide whether it has already offered to vendor the Foldkit source. Leave it in place.
 
-subtree_prompted: false
+subtree_prompted: true
 
 ## Finishing a task
 
@@ -19,6 +19,8 @@ Add new skills under `.agents/skills/<name>/`, and link each one from `.claude/s
 Read [`docs/migration-plan.md`](./docs/migration-plan.md) for the architecture and milestones. Its "Rules for commands to the bulbs" section is binding for any code that sends light commands.
 
 Do not send commands to the real lights during development unless Josh has asked for that run. Test against recorded frames.
+
+`repos/foldkit` landed through a squash merge, so `git subtree pull` cannot find it. To upgrade it, remove the folder, commit, and run `git subtree add` again at the new release tag.
 
 UI components come from foldcn and live in `src/components/ui/`, with `src/lib/icons.ts` and `src/lib/utils.ts`. They are copied source: Oxlint and Oxfmt skip them, and `tsc` checks them. Before adding one, read the guidance below.
 

@@ -1,4 +1,4 @@
-import { Array, Option, Order, pipe } from 'effect'
+import { Array, Match, Option, Order, pipe } from 'effect'
 import { Document, Html, HtmlBuilder } from 'foldkit/html'
 import { Palette, Pencil, Plus } from 'lucide'
 
@@ -14,7 +14,10 @@ import { spinner } from '@/components/ui/spinner'
 import { switch_ } from '@/components/ui/switch'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import type { Tabs } from '@foldkit/ui'
 
+import { type Message as AutomationsMessage } from './automations'
+import * as AutomationsView from './automationsView'
 import {
   type Group,
   type Light,
@@ -27,6 +30,8 @@ import {
 } from './domain'
 import {
   type Activity,
+  AppTab,
+  AppTabs,
   Connection,
   type EditingPreset,
   Message,
@@ -112,12 +117,64 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             'mx-auto flex max-w-xl flex-col gap-8 px-4 pt-[max(env(safe-area-inset-top),2rem)] pb-16',
           ),
         ],
-        [headerView(model, h), problemView(model, h), bodyView(model, h)],
+        [headerView(model, h), problemView(model, h), tabsView(model, h)],
       ),
       connectionPillView(model, h),
     ],
   ),
 })
+
+const APP_TABS: ReadonlyArray<AppTab> = ['Lights', 'Automations']
+
+const TAB_BUTTON =
+  'flex-1 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground data-[selected]:bg-background data-[selected]:text-foreground'
+
+const tabsView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.submodel({
+    slotId: 'app-tabs',
+    model: model.tabs,
+    view: AppTabs.view,
+    viewInputs: {
+      tabs: APP_TABS,
+      selectedValue: model.tab,
+      ariaLabel: 'Sections',
+      toView: ({ tablist, tabs, activeIndex }: Tabs.RenderInfo<AppTab>): Html =>
+        h.div(
+          [h.Class('flex flex-col gap-8')],
+          [
+            h.div(
+              [...tablist, h.Class('flex gap-1 rounded-lg bg-muted p-1')],
+              Array.map(tabs, tab =>
+                h.button([...tab.tab, h.Class(TAB_BUTTON)], [tab.value]),
+              ),
+            ),
+            ...Array.map(
+              Array.filter(tabs, tab => tab.index === activeIndex),
+              tab => h.div([...tab.panel], [panelView(tab.value, model, h)]),
+            ),
+          ],
+        ),
+    },
+    toParentMessage: message => Message.GotTabsMessage({ message }),
+  })
+
+const panelView = (tab: AppTab, model: Model, h: HtmlBuilder<Message>): Html =>
+  Match.value(tab).pipe(
+    Match.when('Lights', () => bodyView(model, h)),
+    Match.when('Automations', () =>
+      h.submodel({
+        slotId: 'automations',
+        model: model.automations,
+        view: AutomationsView.view,
+        viewInputs: {
+          groupNames: Array.map(model.groups, group => group.name),
+        },
+        toParentMessage: (message: AutomationsMessage) =>
+          Message.GotAutomationsMessage({ message }),
+      }),
+    ),
+    Match.exhaustive,
+  )
 
 const bodyView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Startup.match(model.startup, {

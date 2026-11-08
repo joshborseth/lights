@@ -11,7 +11,7 @@ Replace Windfront, the Zigbee2MQTT web UI, with a small Foldkit app as the every
 | `presets.mjs` extension and `presets.json` | 10 presets, including the coordinator-driven Rainbow loop                                      | Keep                  |
 | Windfront 2.15.0                           | Today's lights UI, bundled with Zigbee2MQTT                                                    | Replace for daily use |
 | 9 PM all-off timer                         | Publishes to MQTT                                                                              | Keep, unaffected      |
-| PR-merge purple flash                      | Publishes to MQTT                                                                              | Keep, unaffected      |
+| PR-merge purple flash                      | Runs in the automations service, see below                                                     | Replaced              |
 | Home Assistant, Music Assistant            | TV and music only. Home Assistant has no MQTT integration, so it does not control these lights | Out of scope          |
 
 Zigbee2MQTT and Mosquitto have to stay, because something must drive the radio. Only the UI layer changes, so the swap carries little risk: the new app is one more client.
@@ -38,7 +38,30 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 - Effect `Schema` decodes each known topic at the boundary. Unknown topics are ignored.
 - The UI uses [foldcn](https://foldcn.elianiva.com) components, copied into `src/components/ui/`. Its Slider handles brightness and temperature with large touch targets. Only the slider being dragged keeps state, in `maybeActiveSlider`, so no bulb needs its own Slider Submodel. Foldcn has no color picker, so color stays a native input.
 
-The app is one screen, so it needs no client-side routes and no server fallback for deep links.
+The app has two tabs, Lights and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
+
+### Automations service
+
+The Lights tab still needs no backend. The Automations tab does, because Zigbee2MQTT's socket only relays what Zigbee2MQTT itself publishes, and something must keep watching GitHub when no browser is open.
+
+```
+Browser  --- /automations ---> Tailscale Serve (tailnet only)
+                                  |
+                       lights-automations (Bun, 127.0.0.1:8093)
+                          |                 |
+                     GitHub API        MQTT broker  ->  bulbs
+```
+
+`service/` is one always-on user service, `lights-automations`. The watcher and its API live in the same process, so the app controls the watcher without needing permission to manage systemd. If the process dies, systemd restarts it and the tab shows "Not responding" until it returns.
+
+- `src/automation.ts` holds the settings and status types and the validation shared by the service and the app. The service validates every save with it.
+- Settings: `~/.config/pr-merge-lights/config.json`. MQTT login: `mqtt.env` in the same folder. It is never sent to the browser.
+- State: `~/.local/state/pr-merge-lights/` holds `seen.json`, `control.json`, and `activity.json`.
+- GitHub logins come from `gh auth token --user <account>`, read once and refreshed on a 401. Unchanged event feeds use ETags, which do not count against the rate limit.
+- Writes must be JSON, which makes browsers preflight them. The service answers no preflights, so other sites cannot send commands.
+- A merge older than the catch-up window is recorded but never flashes, so downtime or a newly added account cannot replay old merges.
+
+Deploy with `scripts/deploy-automations.sh`. The Python watcher it replaced was deleted on 2026-11-08. The 9 PM all-off timer still runs `~/pr-merge-lights/lights_off.py`, so keep that folder.
 
 ## Rules for commands to the bulbs
 
@@ -55,6 +78,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Send On and Off twice, 400 ms apart, for groups and bulbs.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
 - **Show reported state, not assumed state.** A slider may lead while dragging, but the next state frame from the bulb wins.
 - **A group slider keeps its own level.** It moves when dragged, and otherwise only when every bulb in the group, on or off, has ended up above it or below it. It then moves to the nearest bulb.
+- **Stop a Rainbow loop with hue and saturation, not hex.** The extension treats a group command carrying a recent Rainbow hex as its own echo and keeps looping. Per-light commands never stop the loop.
 
 ## Milestones
 
@@ -86,3 +110,4 @@ Then use it from the phone for about a week.
 - The app is tailnet only.
 - Presets can be edited in the app.
 - Home Assistant stays for the TV and music.
+- Automations run in a small tailnet-only service, because they must keep running with no browser open.

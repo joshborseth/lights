@@ -11,6 +11,9 @@ import {
 } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
+import { Tabs } from '@foldkit/ui'
+
+import * as Automations from './automations'
 import { PresetLook } from './domain'
 import {
   Connection,
@@ -48,6 +51,9 @@ const settleTimedOut = (requestId: number) =>
   )
 
 const loaded: Model = {
+  tab: 'Lights',
+  tabs: Tabs.init({ id: 'app-tabs' }),
+  automations: Automations.init,
   connection: Connection.Connected(),
   startup: Startup.Ready(),
   isBridgeOnline: true,

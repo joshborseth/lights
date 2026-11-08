@@ -16,11 +16,13 @@ import {
   ManagedResource,
   Runtime,
   Subscription,
-  type Update,
+  Update,
 } from 'foldkit'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
+
+import * as Slider from '@/components/ui/slider'
 
 import {
   type ColorTempRange,
@@ -30,6 +32,7 @@ import {
   Light,
   LightState,
   MAX_BRIGHTNESS,
+  MIN_BRIGHTNESS,
   type Power,
   Preset,
   PresetLook,
@@ -50,6 +53,8 @@ const BASE_RECONNECT_DELAY_MS = 500
 const SETTING_THROTTLE_MS = 400
 const REPEAT_GROUP_POWER_DELAY_MS = 400
 const MAX_PRESET_NAME_LENGTH = 40
+const SLIDER_STEP = 1
+export const PRESET_COLOR_TEMP_RANGE: ColorTempRange = { min: 153, max: 555 }
 
 // MODEL
 
@@ -79,6 +84,19 @@ const Draft = Schema.Struct({
 })
 type Draft = typeof Draft.Type
 
+export const SliderId = defineTaggedUnion({
+  TargetBrightness: { target: Target },
+  TargetColorTemp: { target: Target },
+  EditorBrightness: {},
+  EditorColorTemp: {},
+})
+export type SliderId = typeof SliderId.Type
+
+const ActiveSlider = Schema.Struct({
+  sliderId: SliderId,
+  slider: Slider.Model,
+})
+
 export const EditingPreset = Schema.Struct({
   maybeOriginalName: Schema.Option(Schema.String),
   name: Schema.String,
@@ -102,6 +120,7 @@ export const Model = Schema.Struct({
   presets: Schema.Array(Preset),
   drafts: Schema.Array(Draft),
   maybeExpanded: Schema.Option(Target),
+  maybeActiveSlider: Schema.Option(ActiveSlider),
   presetEditor: PresetEditor,
   maybeProblem: Schema.Option(Schema.String),
 })
@@ -120,11 +139,12 @@ export const Message = defineMessageUnion({
   ClickedExpand: { target: Target },
   UpdatedSetting: { target: Target, setting: Setting },
   CompletedThrottleWait: { target: Target, kind: SettingKind },
+  GotSliderMessage: { sliderId: SliderId, message: Slider.Message },
+  GotActiveSliderMessage: { message: Slider.Message },
   ClickedPreset: { group: Schema.String, preset: Schema.String },
   ClickedNewPreset: {},
   ClickedEditPreset: { preset: Schema.String },
   UpdatedEditorName: { value: Schema.String },
-  UpdatedEditorBrightness: { value: Schema.Number },
   UpdatedEditorLook: { look: SavablePresetLook },
   ClickedCancelEditor: {},
   SubmittedEditor: {},
@@ -262,6 +282,51 @@ export const presetEditorProblem = (
     : Option.none()
 }
 
+const domSafeName = (name: string): string =>
+  pipe(name, String.toLowerCase, String.replaceAll(' ', '-'))
+
+export const targetId = (target: Target): string =>
+  `${String.toLowerCase(target._tag)}-${domSafeName(target.name)}`
+
+export const sliderDomId = (sliderId: SliderId): string =>
+  SliderId.match(sliderId, {
+    TargetBrightness: ({ target }) => `${targetId(target)}-brightness`,
+    TargetColorTemp: ({ target }) => `${targetId(target)}-temperature`,
+    EditorBrightness: () => 'preset-brightness',
+    EditorColorTemp: () => 'preset-temperature',
+  })
+
+const sliderRange = (model: Model, sliderId: SliderId): ColorTempRange => {
+  const brightnessRange = { min: MIN_BRIGHTNESS, max: MAX_BRIGHTNESS }
+  return SliderId.match(sliderId, {
+    TargetBrightness: () => brightnessRange,
+    TargetColorTemp: ({ target }) =>
+      Option.getOrElse(
+        targetStatus(model, target).maybeColorTempRange,
+        () => PRESET_COLOR_TEMP_RANGE,
+      ),
+    EditorBrightness: () => brightnessRange,
+    EditorColorTemp: () => PRESET_COLOR_TEMP_RANGE,
+  })
+}
+
+// NOTE: Only a dragged slider has state worth keeping, so every other slider
+// is rebuilt idle from the Model instead of being stored per bulb.
+export const sliderModelOf = (model: Model, sliderId: SliderId): Slider.Model =>
+  pipe(
+    model.maybeActiveSlider,
+    Option.filter(active => active.slider.id === sliderDomId(sliderId)),
+    Option.match({
+      onNone: () =>
+        Slider.init({
+          id: sliderDomId(sliderId),
+          ...sliderRange(model, sliderId),
+          step: SLIDER_STEP,
+        }),
+      onSome: active => active.slider,
+    }),
+  )
+
 const reconnectDelayMs = (attempt: number): number =>
   Math.min(MAX_RECONNECT_DELAY_MS, BASE_RECONNECT_DELAY_MS * 2 ** attempt)
 
@@ -356,6 +421,74 @@ const modifyEditing = (
 const closedEditor = (model: Model) =>
   modifyFields(model, { presetEditor: () => PresetEditor.Closed() })
 
+const updatedSetting = (
+  model: Model,
+  target: Target,
+  setting: Setting,
+): UpdateReturn => {
+  const isThisDraft = isDraftFor(target, settingKindOf(setting))
+  return Option.match(Array.findFirst(model.drafts, isThisDraft), {
+    onNone: () => ({
+      model: modifyFields(model, {
+        drafts: drafts => [...drafts, { target, setting, isDirty: false }],
+      }),
+      commands: settingCommands(target, setting),
+    }),
+    onSome: () => ({
+      model: modifyFields(model, {
+        drafts: drafts =>
+          Array.map(drafts, draft =>
+            isThisDraft(draft) ? { target, setting, isDirty: true } : draft,
+          ),
+      }),
+    }),
+  })
+}
+
+const appliedSliderValue = (
+  model: Model,
+  sliderId: SliderId,
+  value: number,
+): UpdateReturn =>
+  SliderId.match<UpdateReturn>(sliderId, {
+    TargetBrightness: ({ target }) =>
+      updatedSetting(model, target, Setting.Brightness({ value })),
+    TargetColorTemp: ({ target }) =>
+      updatedSetting(model, target, Setting.ColorTemp({ value })),
+    EditorBrightness: () =>
+      modifyEditing(model, editing =>
+        modifyFields(editing, { brightness: () => value }),
+      ),
+    EditorColorTemp: () =>
+      modifyEditing(model, editing =>
+        modifyFields(editing, {
+          look: () => SavablePresetLook.White({ colorTemp: value }),
+        }),
+      ),
+  })
+
+const foldSliderMessage = (sliderId: SliderId) =>
+  Update.foldChild({
+    update: Slider.update,
+    read: (model: Model) => Option.some(sliderModelOf(model, sliderId)),
+    write: (model: Model, nextSlider: Slider.Model) =>
+      modifyFields(model, {
+        maybeActiveSlider: () =>
+          nextSlider.dragState._tag === 'Dragging'
+            ? Option.some({ sliderId, slider: nextSlider })
+            : Option.none(),
+      }),
+    toParentMessage: (message: Slider.Message): Message =>
+      Message.GotSliderMessage({ sliderId, message }),
+    foldOutMessage: outMessage =>
+      Slider.OutMessage.match(outMessage, {
+        ChangedValue:
+          ({ value }) =>
+          (stepModel: Model) =>
+            appliedSliderValue(stepModel, sliderId, value),
+      }),
+  })
+
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
     AcquiredSocket: () => ({
@@ -410,25 +543,17 @@ export const update = (model: Model, message: Message) =>
       }),
     }),
 
-    UpdatedSetting: ({ target, setting }) => {
-      const isThisDraft = isDraftFor(target, settingKindOf(setting))
-      return Option.match(Array.findFirst(model.drafts, isThisDraft), {
-        onNone: () => ({
-          model: modifyFields(model, {
-            drafts: drafts => [...drafts, { target, setting, isDirty: false }],
-          }),
-          commands: settingCommands(target, setting),
-        }),
-        onSome: () => ({
-          model: modifyFields(model, {
-            drafts: drafts =>
-              Array.map(drafts, draft =>
-                isThisDraft(draft) ? { target, setting, isDirty: true } : draft,
-              ),
-          }),
-        }),
-      })
-    },
+    UpdatedSetting: ({ target, setting }) =>
+      updatedSetting(model, target, setting),
+
+    GotSliderMessage: ({ sliderId, message }) =>
+      foldSliderMessage(sliderId)(model, message),
+
+    GotActiveSliderMessage: ({ message }) =>
+      Option.match(model.maybeActiveSlider, {
+        onNone: () => ({ model }),
+        onSome: ({ sliderId }) => foldSliderMessage(sliderId)(model, message),
+      }),
 
     CompletedThrottleWait: ({ target, kind }) => {
       const isThisDraft = isDraftFor(target, kind)
@@ -494,11 +619,6 @@ export const update = (model: Model, message: Message) =>
         modifyFields(editing, { name: () => value }),
       ),
 
-    UpdatedEditorBrightness: ({ value }) =>
-      modifyEditing(model, editing =>
-        modifyFields(editing, { brightness: () => value }),
-      ),
-
     UpdatedEditorLook: ({ look }) =>
       modifyEditing(model, editing =>
         modifyFields(editing, { look: () => look }),
@@ -561,6 +681,7 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     presets: [],
     drafts: [],
     maybeExpanded: Option.none(),
+    maybeActiveSlider: Option.none(),
     presetEditor: PresetEditor.Closed(),
     maybeProblem: Option.none(),
   },
@@ -715,7 +836,7 @@ const streamSocketMessages = (socket: WebSocket) =>
     ).pipe(Effect.flatMap(() => Effect.never)),
   )
 
-export const subscriptions = Subscription.make<
+const socketSubscriptions = Subscription.make<
   Model,
   Message,
   Z2mSocketService
@@ -741,3 +862,16 @@ export const subscriptions = Subscription.make<
     },
   ),
 }))
+
+const activeSliderSubscriptions = Subscription.lift(Slider.subscriptions)<
+  Model,
+  Message
+>({
+  read: model => Option.map(model.maybeActiveSlider, active => active.slider),
+  toParentMessage: message => Message.GotActiveSliderMessage({ message }),
+})
+
+export const subscriptions = Subscription.aggregate(
+  socketSubscriptions,
+  activeSliderSubscriptions,
+)

@@ -4,6 +4,11 @@
   "categories": {
     "correctness": "off"
   },
+  "ignorePatterns": [
+    "src/components/ui/",
+    "src/lib/icons.ts",
+    "src/lib/utils.ts"
+  ],
   "rules": {
     "effecttsgo/catch-unfailable-effect": "warn",
     "effecttsgo/effect-fn-iife": "warn",

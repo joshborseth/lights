@@ -1,11 +1,22 @@
 import { Array, Option, Order, pipe } from 'effect'
 import { Document, Html, HtmlBuilder } from 'foldkit/html'
+import { Palette, Pencil, Plus } from 'lucide'
+
+import { Alert } from '@/components/ui/alert'
+import { badge } from '@/components/ui/badge'
+import { button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Empty } from '@/components/ui/empty'
+import { input } from '@/components/ui/input'
+import * as Slider from '@/components/ui/slider'
+import { spinner } from '@/components/ui/spinner'
+import { switch_ } from '@/components/ui/switch'
+import { icon } from '@/lib/icons'
 
 import {
   type Group,
   type Light,
   MAX_BRIGHTNESS,
-  MIN_BRIGHTNESS,
   PRESET_GROUPS,
   type Preset,
   PresetLook,
@@ -17,12 +28,18 @@ import {
   type EditingPreset,
   Message,
   type Model,
+  PRESET_COLOR_TEMP_RANGE,
   PresetEditor,
+  SliderId,
   Target,
   type TargetStatus,
   draftSetting,
   isExpanded,
+  lightsOfTarget,
   presetEditorProblem,
+  sliderDomId,
+  sliderModelOf,
+  targetId,
   targetStatus,
 } from './main'
 
@@ -40,11 +57,24 @@ const GROUP_ORDER: ReadonlyArray<string> = [
   'Bedroom',
 ]
 
-const CARD = 'rounded-2xl bg-stone-900 p-4 ring-1 ring-stone-800'
-const SLIDER = 'h-8 w-full accent-amber-300'
-const CAPTION = 'text-xs text-stone-400'
-const QUIET_BUTTON =
-  'rounded-lg bg-stone-800 px-3 py-2 text-sm text-stone-200 hover:bg-stone-700'
+const WARM_WHITE = '#ffdfae'
+const MIN_GLOW_LEVEL = 0.3
+const OFF_GLOW = 'oklch(0.42 0.008 70)'
+
+const SECTION = 'flex flex-col gap-3'
+const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
+const CAPTION = 'text-xs text-muted-foreground'
+const THUMB =
+  'h-5 w-3 rounded-full border-0 bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.25),0_1px_4px_rgb(0_0_0/0.4)] ring-white/40'
+const TRACK = 'rounded-lg bg-muted data-horizontal:h-9'
+const COLOR_INPUT =
+  'h-11 w-full cursor-pointer rounded-lg border border-input bg-transparent p-1 [&::-moz-color-swatch]:rounded-md [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-md [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0'
+
+const brightnessPercent = (brightness: number): number =>
+  Math.round((brightness / MAX_BRIGHTNESS) * 100)
+
+const formatPercent = (brightness: number): string =>
+  `${brightnessPercent(brightness)}%`
 
 const roomOf = (light: Light): string =>
   pipe(
@@ -58,13 +88,20 @@ const groupRank = (group: Group): number =>
     Option.getOrElse(() => GROUP_ORDER.length),
   )
 
+const onCount = (model: Model, lights: ReadonlyArray<Light>): number =>
+  Array.filter(lights, light => model.states[light.name]?.power === 'ON').length
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: 'Lights',
   body: h.main(
-    [h.Class('min-h-screen bg-stone-950 text-stone-100')],
+    [h.Class('min-h-dvh')],
     [
       h.div(
-        [h.Class('mx-auto flex max-w-xl flex-col gap-6 px-4 py-6')],
+        [
+          h.Class(
+            'mx-auto flex max-w-xl flex-col gap-8 px-4 pt-[max(env(safe-area-inset-top),2rem)] pb-16',
+          ),
+        ],
         [
           headerView(model, h),
           problemView(model, h),
@@ -88,12 +125,47 @@ const connectionLabel = (model: Model): string =>
     Connected: () => (model.isBridgeOnline ? 'Live' : 'Zigbee offline'),
   })
 
+const connectionDotClass = (model: Model): string =>
+  Connection.match(model.connection, {
+    Connecting: () => 'animate-pulse bg-primary',
+    WaitingToReconnect: () => 'animate-pulse bg-primary',
+    Connected: () =>
+      model.isBridgeOnline ? 'bg-emerald-400' : 'bg-destructive',
+  })
+
 const headerView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.header(
-    [h.Class('flex items-baseline justify-between')],
+    [h.Class('flex items-center justify-between px-1')],
     [
-      h.h1([h.Class('text-2xl font-semibold')], ['Lights']),
-      h.span([h.Class(CAPTION), h.Role('status')], [connectionLabel(model)]),
+      h.div(
+        [],
+        [
+          h.h1([h.Class('text-2xl font-semibold tracking-tight')], ['Lights']),
+          Array.isReadonlyArrayEmpty(model.lights)
+            ? h.empty
+            : h.p(
+                [h.Class(`mt-0.5 tabular-nums ${CAPTION}`)],
+                [
+                  `${onCount(model, model.lights)} of ${model.lights.length} on`,
+                ],
+              ),
+        ],
+      ),
+      h.div(
+        [h.Role('status')],
+        [
+          badge<Message>(
+            { variant: 'secondary', className: 'h-6 gap-1.5 px-2.5' },
+            [
+              h.span([
+                h.Class(`size-1.5 rounded-full ${connectionDotClass(model)}`),
+              ]),
+              connectionLabel(model),
+            ],
+            h,
+          ),
+        ],
+      ),
     ],
   )
 
@@ -101,48 +173,105 @@ const problemView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Option.match(model.maybeProblem, {
     onNone: () => h.empty,
     onSome: problem =>
-      h.p(
-        [
-          h.Class('rounded-lg bg-red-950 p-3 text-sm text-red-200'),
-          h.Role('alert'),
-        ],
-        [problem],
+      Alert<Message>(
+        { variant: 'destructive' },
+        [Alert.description<Message>({}, [problem], h)],
+        h,
       ),
   })
 
 const emptyView = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.p(
-    [h.Class('py-16 text-center text-stone-400')],
+  Empty<Message>(
+    { className: 'py-24' },
     [
-      model.connection._tag === 'Connected'
-        ? 'Waiting for your lights…'
-        : 'Connecting to your lights…',
+      Empty.header<Message>(
+        {},
+        [
+          Empty.media<Message>(
+            {},
+            [
+              spinner<Message>(
+                { className: 'size-5 text-muted-foreground' },
+                h,
+              ),
+            ],
+            h,
+          ),
+          Empty.description<Message>(
+            {},
+            [
+              model.connection._tag === 'Connected'
+                ? 'Waiting for your lights…'
+                : 'Connecting to your lights…',
+            ],
+            h,
+          ),
+        ],
+        h,
+      ),
     ],
+    h,
   )
+
+const glowColor = (status: TargetStatus): string =>
+  status.isOn ? Option.getOrElse(status.maybeHex, () => WARM_WHITE) : OFF_GLOW
+
+const glowLevel = (status: TargetStatus): number =>
+  status.isOn ? Math.max(MIN_GLOW_LEVEL, status.brightness / MAX_BRIGHTNESS) : 0
+
+const glowAttribute = (status: TargetStatus, h: HtmlBuilder<Message>) =>
+  h.Style({
+    '--glow': glowColor(status),
+    '--level': String(glowLevel(status)),
+  })
 
 const groupsView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.section(
-    [h.Class('flex flex-col gap-3'), h.AriaLabel('Groups')],
+    [h.Class(SECTION), h.AriaLabel('Groups')],
     Array.map(
       Array.sortBy(Order.mapInput(Order.Number, groupRank))(model.groups),
-      group =>
-        h.keyed('div')(
-          group.name,
-          [],
-          [
-            targetCardView(
-              model,
-              Target.Group({ name: group.name }),
-              group.name,
-              h,
+      group => groupCardView(model, group, h),
+    ),
+  )
+
+const groupCardView = (
+  model: Model,
+  group: Group,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const target = Target.Group({ name: group.name })
+  const status = targetStatus(model, target)
+  const lights = lightsOfTarget(model, target)
+  return h.keyed('article')(
+    group.name,
+    [h.AriaLabel(group.name), glowAttribute(status, h)],
+    [
+      Card<Message>(
+        { className: 'bulb-glow transition-shadow' },
+        [
+          Card.content<Message>(
+            { className: 'flex flex-col gap-4' },
+            [
+              targetControlsView(
+                model,
+                target,
+                group.name,
+                `${onCount(model, lights)} of ${lights.length} on`,
+                status,
+                h,
+              ),
               PRESET_GROUPS.includes(group.name)
                 ? presetChipsView(model, group.name, h)
                 : h.empty,
-            ),
-          ],
-        ),
-    ),
+            ],
+            h,
+          ),
+        ],
+        h,
+      ),
+    ],
   )
+}
 
 const roomsView = (
   model: Model,
@@ -155,23 +284,13 @@ const roomsView = (
         ? Option.none()
         : Option.some(
             h.section(
-              [h.Class('flex flex-col gap-3'), h.AriaLabel(room)],
+              [h.Class(SECTION), h.AriaLabel(room)],
               [
-                h.h2([h.Class('text-sm font-medium text-stone-400')], [room]),
-                ...Array.map(lights, light =>
-                  h.keyed('div')(
-                    light.address,
-                    [],
-                    [
-                      targetCardView(
-                        model,
-                        Target.Light({ name: light.name }),
-                        light.name,
-                        h,
-                        h.empty,
-                      ),
-                    ],
-                  ),
+                h.h2([h.Class(SECTION_TITLE)], [room]),
+                Card<Message>(
+                  { className: 'gap-0 py-0' },
+                  Array.map(lights, light => lightRowView(model, light, h)),
+                  h,
                 ),
               ],
             ),
@@ -179,49 +298,66 @@ const roomsView = (
     }),
   )
 
-const swatchColor = (status: TargetStatus): string =>
-  status.isOn ? Option.getOrElse(status.maybeHex, () => '#fcd34d') : '#292524'
+const lightRowView = (
+  model: Model,
+  light: Light,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const target = Target.Light({ name: light.name })
+  const status = targetStatus(model, target)
+  return h.keyed('article')(
+    light.address,
+    [
+      h.AriaLabel(light.name),
+      glowAttribute(status, h),
+      h.Class('not-first:border-t border-border p-4'),
+    ],
+    [
+      targetControlsView(
+        model,
+        target,
+        light.name,
+        status.isOn ? formatPercent(status.brightness) : 'Off',
+        status,
+        h,
+      ),
+    ],
+  )
+}
 
-const targetCardView = (
+const targetControlsView = (
   model: Model,
   target: Target,
   name: string,
+  detail: string,
+  status: TargetStatus,
   h: HtmlBuilder<Message>,
-  extra: Html,
 ): Html => {
-  const status = targetStatus(model, target)
   const isOpen = isExpanded(model, target)
-  return h.article(
-    [h.Class(`${CARD} flex flex-col gap-3`), h.AriaLabel(name)],
+  const hasColorControls =
+    Option.isSome(status.maybeColorTempRange) || status.supportsColor
+  return h.div(
+    [h.Class('flex flex-col gap-3')],
     [
       h.div(
         [h.Class('flex items-center gap-3')],
         [
-          h.span([
-            h.Class('h-5 w-5 shrink-0 rounded-full ring-1 ring-stone-700'),
-            h.Style({ backgroundColor: swatchColor(status) }),
-          ]),
-          h.span([h.Class('min-w-0 flex-1 truncate font-medium')], [name]),
-          h.button(
+          bulbDotView(status, h),
+          h.div(
+            [h.Class('min-w-0 flex-1')],
             [
-              h.Type('button'),
-              h.AriaPressed(String(status.isOn)),
-              h.AriaLabel(`${name} power`),
-              h.OnClick(Message.ClickedPower({ target })),
-              h.Class(
-                status.isOn
-                  ? 'w-16 rounded-lg bg-amber-300 py-2 text-sm font-semibold text-stone-950'
-                  : 'w-16 rounded-lg bg-stone-800 py-2 text-sm font-semibold text-stone-300',
-              ),
+              h.p([h.Class('truncate font-medium')], [name]),
+              h.p([h.Class(`tabular-nums ${CAPTION}`)], [detail]),
             ],
-            [status.isOn ? 'On' : 'Off'],
           ),
+          hasColorControls ? colorButtonView(target, name, isOpen, h) : h.empty,
+          powerSwitchView(target, name, status, h),
         ],
       ),
-      rangeView(
+      sliderView(
+        model,
+        SliderId.TargetBrightness({ target }),
         `${name} brightness`,
-        MIN_BRIGHTNESS,
-        MAX_BRIGHTNESS,
         Option.match(draftSetting(model, target, 'Brightness'), {
           onNone: () => status.brightness,
           onSome: setting =>
@@ -231,47 +367,97 @@ const targetCardView = (
               Color: () => status.brightness,
             }),
         }),
-        value =>
-          Message.UpdatedSetting({
-            target,
-            setting: Setting.Brightness({ value }),
-          }),
+        formatPercent,
+        { filledTrackClass: 'bg-(--glow)' },
         h,
       ),
-      extra,
-      h.button(
-        [
-          h.Type('button'),
-          h.AriaExpanded(isOpen),
-          h.AriaLabel(`${name} color`),
-          h.OnClick(Message.ClickedExpand({ target })),
-          h.Class('self-start text-sm text-stone-400 hover:text-stone-200'),
-        ],
-        [isOpen ? 'Hide color' : 'Color'],
-      ),
-      isOpen ? colorControlsView(model, target, name, status, h) : h.empty,
+      isOpen && hasColorControls
+        ? colorControlsView(model, target, name, status, h)
+        : h.empty,
     ],
   )
 }
 
-const rangeView = (
-  label: string,
-  min: number,
-  max: number,
-  value: number,
-  toMessage: (value: number) => Message,
+const bulbDotView = (status: TargetStatus, h: HtmlBuilder<Message>): Html =>
+  h.span([
+    h.Class(
+      status.isOn
+        ? 'size-3 shrink-0 rounded-full bg-(--glow) shadow-[0_0_14px_var(--glow)]'
+        : 'size-3 shrink-0 rounded-full bg-muted',
+    ),
+  ])
+
+const colorButtonView = (
+  target: Target,
+  name: string,
+  isOpen: boolean,
   h: HtmlBuilder<Message>,
 ): Html =>
-  h.input([
-    h.Type('range'),
-    h.AriaLabel(label),
-    h.Min(String(min)),
-    h.Max(String(max)),
-    h.Step('1'),
-    h.Value(String(value)),
-    h.OnInput(raw => toMessage(Number(raw))),
-    h.Class(SLIDER),
-  ])
+  button<Message>(
+    {
+      variant: 'ghost',
+      size: 'icon-lg',
+      onClick: Message.ClickedExpand({ target }),
+      className: 'text-muted-foreground aria-expanded:text-foreground',
+      attributes: [h.AriaLabel(`${name} color`), h.AriaExpanded(isOpen)],
+    },
+    icon(h, Palette),
+    h,
+  )
+
+const powerSwitchView = (
+  target: Target,
+  name: string,
+  status: TargetStatus,
+  h: HtmlBuilder<Message>,
+): Html =>
+  switch_<Message>(
+    {
+      id: `${targetId(target)}-power`,
+      label: `${name} power`,
+      isChecked: status.isOn,
+      onToggle: () => Message.ClickedPower({ target }),
+      className:
+        'data-checked:bg-(--glow) data-[size=default]:h-7 data-[size=default]:w-12',
+      thumbClass:
+        'bg-white shadow-sm dark:data-checked:bg-white dark:data-unchecked:bg-foreground group-data-[size=default]/switch:size-6 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-3px)] group-data-[size=default]/switch:data-unchecked:translate-x-px',
+      labelClass: 'sr-only',
+      wrapperClass: 'gap-0',
+    },
+    h,
+  )
+
+type SliderClasses = Readonly<{
+  filledTrackClass: string
+  trackClass?: string
+}>
+
+const sliderView = (
+  model: Model,
+  sliderId: SliderId,
+  label: string,
+  value: number,
+  formatValue: (value: number) => string,
+  classes: SliderClasses,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.submodel({
+    slotId: sliderDomId(sliderId),
+    model: sliderModelOf(model, sliderId),
+    view: Slider.view,
+    viewInputs: Slider.styledViewInputs(
+      {
+        value,
+        ariaLabel: label,
+        formatValue,
+        trackClass: classes.trackClass ?? TRACK,
+        filledTrackClass: classes.filledTrackClass,
+        thumbClass: THUMB,
+      },
+      h,
+    ),
+    toParentMessage: message => Message.GotSliderMessage({ sliderId, message }),
+  })
 
 const colorControlsView = (
   model: Model,
@@ -286,35 +472,21 @@ const colorControlsView = (
       Option.match(status.maybeColorTempRange, {
         onNone: () => h.empty,
         onSome: range =>
-          h.div(
-            [],
-            [
-              h.div(
-                [h.Class(`flex justify-between ${CAPTION}`)],
-                [h.span([], ['Cool']), h.span([], ['Warm'])],
-              ),
-              rangeView(
-                `${name} temperature`,
-                range.min,
-                range.max,
-                Option.match(draftSetting(model, target, 'ColorTemp'), {
-                  onNone: () =>
-                    Option.getOrElse(status.maybeColorTemp, () => range.min),
-                  onSome: setting =>
-                    Setting.match(setting, {
-                      ColorTemp: ({ value }) => value,
-                      Brightness: () => range.min,
-                      Color: () => range.min,
-                    }),
+          temperatureSliderView(
+            model,
+            SliderId.TargetColorTemp({ target }),
+            `${name} temperature`,
+            Option.match(draftSetting(model, target, 'ColorTemp'), {
+              onNone: () =>
+                Option.getOrElse(status.maybeColorTemp, () => range.min),
+              onSome: setting =>
+                Setting.match(setting, {
+                  ColorTemp: ({ value }) => value,
+                  Brightness: () => range.min,
+                  Color: () => range.min,
                 }),
-                value =>
-                  Message.UpdatedSetting({
-                    target,
-                    setting: Setting.ColorTemp({ value }),
-                  }),
-                h,
-              ),
-            ],
+            }),
+            h,
           ),
       }),
       status.supportsColor
@@ -339,19 +511,59 @@ const colorControlsView = (
                 setting: Setting.Color({ hex }),
               }),
             ),
-            h.Class('h-11 w-full rounded-lg bg-transparent'),
+            h.Class(COLOR_INPUT),
           ])
         : h.empty,
+    ],
+  )
+
+const temperatureSliderView = (
+  model: Model,
+  sliderId: SliderId,
+  label: string,
+  value: number,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-1.5')],
+    [
+      h.div(
+        [h.Class(`flex justify-between px-1 ${CAPTION}`)],
+        [h.span([], ['Cool']), h.span([], ['Warm'])],
+      ),
+      sliderView(
+        model,
+        sliderId,
+        label,
+        value,
+        mireds => `${mireds} mireds`,
+        {
+          trackClass:
+            'rounded-lg bg-linear-to-r from-sky-200 via-orange-50 to-amber-400 data-horizontal:h-9',
+          filledTrackClass: 'bg-transparent',
+        },
+        h,
+      ),
     ],
   )
 
 const presetSwatch = (preset: Preset): string =>
   PresetLook.match(preset.look, {
     Color: ({ hex }) => hex,
-    White: () => '#ffdfae',
+    White: () => WARM_WHITE,
     Rainbow: () =>
       'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)',
   })
+
+const presetDotView = (
+  preset: Preset,
+  sizeClass: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.span([
+    h.Class(`${sizeClass} shrink-0 rounded-full`),
+    h.Style({ background: presetSwatch(preset) }),
+  ])
 
 const presetChipsView = (
   model: Model,
@@ -359,22 +571,26 @@ const presetChipsView = (
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
-    [h.Class('flex flex-wrap gap-2')],
+    [
+      h.Class(
+        'no-scrollbar -mx-(--card-spacing) flex gap-2 overflow-x-auto px-(--card-spacing)',
+      ),
+    ],
     Array.map(model.presets, preset =>
-      h.keyed('button')(
+      h.keyed('div')(
         preset.name,
+        [],
         [
-          h.Type('button'),
-          h.AriaLabel(`${preset.name} on ${group}`),
-          h.OnClick(Message.ClickedPreset({ group, preset: preset.name })),
-          h.Class(`${QUIET_BUTTON} flex items-center gap-2`),
-        ],
-        [
-          h.span([
-            h.Class('h-3 w-3 rounded-full'),
-            h.Style({ background: presetSwatch(preset) }),
-          ]),
-          preset.name,
+          button<Message>(
+            {
+              variant: 'secondary',
+              onClick: Message.ClickedPreset({ group, preset: preset.name }),
+              className: 'h-9 gap-2 rounded-full pr-3.5 pl-2.5',
+              attributes: [h.AriaLabel(`${preset.name} on ${group}`)],
+            },
+            [presetDotView(preset, 'size-3.5', h), preset.name],
+            h,
+          ),
         ],
       ),
     ),
@@ -382,19 +598,21 @@ const presetChipsView = (
 
 const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.section(
-    [h.Class('flex flex-col gap-3'), h.AriaLabel('Presets')],
+    [h.Class(SECTION), h.AriaLabel('Presets')],
     [
       h.div(
         [h.Class('flex items-center justify-between')],
         [
-          h.h2([h.Class('text-sm font-medium text-stone-400')], ['Presets']),
-          h.button(
-            [
-              h.Type('button'),
-              h.OnClick(Message.ClickedNewPreset()),
-              h.Class(QUIET_BUTTON),
-            ],
-            ['New preset'],
+          h.h2([h.Class(SECTION_TITLE)], ['Presets']),
+          button<Message>(
+            {
+              variant: 'ghost',
+              size: 'sm',
+              onClick: Message.ClickedNewPreset(),
+              className: 'text-muted-foreground',
+            },
+            [icon(h, Plus, 'size-3.5', 'inline-start'), 'New preset'],
+            h,
           ),
         ],
       ),
@@ -402,39 +620,49 @@ const presetsView = (model: Model, h: HtmlBuilder<Message>): Html =>
         Closed: () => h.empty,
         Open: ({ editing }) => presetEditorView(model, editing, h),
       }),
-      h.ul(
-        [h.Class(`${CARD} flex flex-col gap-2`)],
-        Array.map(model.presets, preset =>
-          h.keyed('li')(
-            preset.name,
-            [h.Class('flex items-center gap-3')],
-            [
-              h.span([
-                h.Class('h-4 w-4 rounded-full'),
-                h.Style({ background: presetSwatch(preset) }),
-              ]),
-              h.span([h.Class('flex-1 truncate')], [preset.name]),
-              PresetLook.match(preset.look, {
-                Rainbow: () => h.span([h.Class(CAPTION)], ['Built in']),
-                Color: () => editPresetButtonView(preset, h),
-                White: () => editPresetButtonView(preset, h),
-              }),
-            ],
+      Card<Message>(
+        { className: 'gap-0 py-0' },
+        [
+          h.ul(
+            [],
+            Array.map(model.presets, preset =>
+              h.keyed('li')(
+                preset.name,
+                [
+                  h.Class(
+                    'not-first:border-t flex h-13 items-center gap-3 border-border px-4',
+                  ),
+                ],
+                [
+                  presetDotView(preset, 'size-4', h),
+                  h.span([h.Class('flex-1 truncate')], [preset.name]),
+                  PresetLook.match(preset.look, {
+                    Rainbow: () =>
+                      badge<Message>({ variant: 'secondary' }, ['Built in'], h),
+                    Color: () => editPresetButtonView(preset, h),
+                    White: () => editPresetButtonView(preset, h),
+                  }),
+                ],
+              ),
+            ),
           ),
-        ),
+        ],
+        h,
       ),
     ],
   )
 
 const editPresetButtonView = (preset: Preset, h: HtmlBuilder<Message>): Html =>
-  h.button(
-    [
-      h.Type('button'),
-      h.AriaLabel(`Edit ${preset.name}`),
-      h.OnClick(Message.ClickedEditPreset({ preset: preset.name })),
-      h.Class('text-sm text-stone-400 hover:text-stone-200'),
-    ],
-    ['Edit'],
+  button<Message>(
+    {
+      variant: 'ghost',
+      size: 'icon-lg',
+      onClick: Message.ClickedEditPreset({ preset: preset.name }),
+      className: '-mr-2 text-muted-foreground',
+      attributes: [h.AriaLabel(`Edit ${preset.name}`)],
+    },
+    icon(h, Pencil),
+    h,
   )
 
 const presetEditorView = (
@@ -446,80 +674,112 @@ const presetEditorView = (
   const isNew = Option.isNone(editing.maybeOriginalName)
   return h.form(
     [
-      h.Class(`${CARD} flex flex-col gap-3`),
       h.AriaLabel(isNew ? 'New preset' : 'Edit preset'),
       h.OnSubmit(Message.SubmittedEditor()),
     ],
     [
-      h.input([
-        h.Type('text'),
-        h.AriaLabel('Preset name'),
-        h.Placeholder('Preset name'),
-        h.Value(editing.name),
-        h.OnInput(value => Message.UpdatedEditorName({ value })),
-        h.Class('rounded-lg bg-stone-800 px-3 py-2 text-stone-100'),
-      ]),
-      rangeView(
-        'Preset brightness',
-        MIN_BRIGHTNESS,
-        MAX_BRIGHTNESS,
-        editing.brightness,
-        value => Message.UpdatedEditorBrightness({ value }),
-        h,
-      ),
-      lookEditorView(editing, h),
-      Option.match(maybeProblem, {
-        onNone: () => h.empty,
-        onSome: problem => h.p([h.Class(CAPTION)], [problem]),
-      }),
-      h.div(
-        [h.Class('flex gap-2')],
+      Card<Message>(
+        {},
         [
-          h.button(
+          Card.content<Message>(
+            { className: 'flex flex-col gap-4' },
             [
-              h.Type('submit'),
-              h.Disabled(Option.isSome(maybeProblem)),
-              h.Class(
-                'rounded-lg bg-amber-300 px-4 py-2 text-sm font-semibold text-stone-950 disabled:opacity-40',
+              input<Message>(
+                {
+                  id: 'preset-name',
+                  label: 'Preset name',
+                  value: editing.name,
+                  onInput: value => Message.UpdatedEditorName({ value }),
+                  className: 'h-10',
+                },
+                h,
               ),
-            ],
-            ['Save'],
-          ),
-          h.button(
-            [
-              h.Type('button'),
-              h.OnClick(Message.ClickedCancelEditor()),
-              h.Class(QUIET_BUTTON),
-            ],
-            ['Cancel'],
-          ),
-          isNew
-            ? h.empty
-            : h.button(
+              h.div(
+                [h.Class('flex flex-col gap-1.5')],
                 [
-                  h.Type('button'),
-                  h.OnClick(Message.ClickedDeletePreset()),
-                  h.Class(
-                    'ml-auto rounded-lg px-3 py-2 text-sm text-red-300 hover:bg-red-950',
+                  h.div(
+                    [h.Class(`flex justify-between px-1 ${CAPTION}`)],
+                    [
+                      h.span([], ['Brightness']),
+                      h.span(
+                        [h.Class('tabular-nums')],
+                        [formatPercent(editing.brightness)],
+                      ),
+                    ],
+                  ),
+                  sliderView(
+                    model,
+                    SliderId.EditorBrightness(),
+                    'Preset brightness',
+                    editing.brightness,
+                    formatPercent,
+                    { filledTrackClass: 'bg-primary' },
+                    h,
                   ),
                 ],
-                ['Delete'],
               ),
+              lookEditorView(model, editing, h),
+              Option.match(maybeProblem, {
+                onNone: () => h.empty,
+                onSome: problem => h.p([h.Class(CAPTION)], [problem]),
+              }),
+              h.div(
+                [h.Class('flex gap-2')],
+                [
+                  button<Message>(
+                    {
+                      type: 'submit',
+                      size: 'lg',
+                      isDisabled: Option.isSome(maybeProblem),
+                      className: 'px-4',
+                    },
+                    'Save',
+                    h,
+                  ),
+                  button<Message>(
+                    {
+                      variant: 'secondary',
+                      size: 'lg',
+                      onClick: Message.ClickedCancelEditor(),
+                      className: 'px-4',
+                    },
+                    'Cancel',
+                    h,
+                  ),
+                  isNew
+                    ? h.empty
+                    : button<Message>(
+                        {
+                          variant: 'destructive',
+                          size: 'lg',
+                          onClick: Message.ClickedDeletePreset(),
+                          className: 'ml-auto px-4',
+                        },
+                        'Delete',
+                        h,
+                      ),
+                ],
+              ),
+            ],
+            h,
+          ),
         ],
+        h,
       ),
     ],
   )
 }
 
 const lookEditorView = (
+  model: Model,
   editing: EditingPreset,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
-    [h.Class('flex flex-col gap-2')],
+    [h.Class('flex flex-col gap-3')],
     [
       h.div(
-        [h.Class('flex gap-2')],
+        [h.Class('grid grid-cols-2 gap-1 rounded-lg bg-muted p-1')],
         [
           lookTabView(
             'White',
@@ -537,15 +797,11 @@ const lookEditorView = (
       ),
       SavablePresetLook.match(editing.look, {
         White: ({ colorTemp }) =>
-          rangeView(
+          temperatureSliderView(
+            model,
+            SliderId.EditorColorTemp(),
             'Preset temperature',
-            153,
-            555,
-            colorTemp,
-            value =>
-              Message.UpdatedEditorLook({
-                look: SavablePresetLook.White({ colorTemp: value }),
-              }),
+            Math.min(colorTemp, PRESET_COLOR_TEMP_RANGE.max),
             h,
           ),
         Color: ({ hex }) =>
@@ -558,7 +814,7 @@ const lookEditorView = (
                 look: SavablePresetLook.Color({ hex: value }),
               }),
             ),
-            h.Class('h-11 w-full rounded-lg bg-transparent'),
+            h.Class(COLOR_INPUT),
           ]),
       }),
     ],
@@ -570,16 +826,15 @@ const lookTabView = (
   look: SavablePresetLook,
   h: HtmlBuilder<Message>,
 ): Html =>
-  h.button(
-    [
-      h.Type('button'),
-      h.AriaPressed(String(isSelected)),
-      h.OnClick(Message.UpdatedEditorLook({ look })),
-      h.Class(
-        isSelected
-          ? 'rounded-lg bg-stone-200 px-3 py-2 text-sm text-stone-950'
-          : QUIET_BUTTON,
-      ),
-    ],
-    [label],
+  button<Message>(
+    {
+      variant: isSelected ? 'secondary' : 'ghost',
+      onClick: Message.UpdatedEditorLook({ look }),
+      className: isSelected
+        ? 'bg-card shadow-sm hover:bg-card'
+        : 'text-muted-foreground',
+      attributes: [h.AriaPressed(String(isSelected))],
+    },
+    label,
+    h,
   )

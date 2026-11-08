@@ -1,5 +1,14 @@
 import { Option } from 'effect'
-import { Command, click, expect, given, role, scene, text } from 'foldkit/scene'
+import {
+  Command,
+  click,
+  expect,
+  given,
+  keydown,
+  role,
+  scene,
+  text,
+} from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
 import { PresetLook } from './domain'
@@ -10,6 +19,8 @@ import {
   PresetEditor,
   SendFrame,
   SendFrameTwice,
+  Target,
+  WaitForThrottle,
   update,
 } from './main'
 import { view } from './view'
@@ -50,6 +61,7 @@ const loaded: Model = {
   ],
   drafts: [],
   maybeExpanded: Option.none(),
+  maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
 }
@@ -74,13 +86,18 @@ describe('view', () => {
       expect(role('status')).toHaveText('Live'),
       expect(role('article', { name: 'All Lights' })).toExist(),
       expect(role('region', { name: 'Living Room' })).toExist(),
-      expect(role('button', { name: 'Living Room Orb power' })).toHaveText(
-        'On',
+      expect(role('switch', { name: 'Living Room Orb power' })).toHaveAttr(
+        'aria-checked',
+        'true',
       ),
-      expect(role('button', { name: 'Bedroom UFO power' })).toHaveText('Off'),
-      expect(
-        role('slider', { name: 'Living Room Orb brightness' }),
-      ).toHaveValue('120'),
+      expect(role('switch', { name: 'Bedroom UFO power' })).toHaveAttr(
+        'aria-checked',
+        'false',
+      ),
+      expect(role('slider', { name: 'Living Room Orb brightness' })).toHaveAttr(
+        'aria-valuenow',
+        '120',
+      ),
     )
   })
 
@@ -97,7 +114,7 @@ describe('view', () => {
     scene(
       { update, view },
       given(loaded),
-      click(role('button', { name: 'Bedroom UFO power' })),
+      click(role('switch', { name: 'Bedroom UFO power' })),
       Command.expectExact(
         SendFrame({
           frame: JSON.stringify({
@@ -114,8 +131,34 @@ describe('view', () => {
     scene(
       { update, view },
       given(loaded),
-      click(role('button', { name: 'All Lights power' })),
+      click(role('switch', { name: 'All Lights power' })),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+    )
+  })
+
+  test('arrow key on a brightness slider sends one throttled change', () => {
+    const orb = Target.Light({ name: 'Living Room Orb' })
+    scene(
+      { update, view },
+      given(loaded),
+      keydown(
+        role('slider', { name: 'Living Room Orb brightness' }),
+        'ArrowRight',
+      ),
+      Command.expectHas(
+        SendFrame({
+          frame: JSON.stringify({
+            topic: 'Living Room Orb/set',
+            payload: { brightness: 121 },
+          }),
+        }),
+      ),
+      Command.expectHas(WaitForThrottle({ target: orb, kind: 'Brightness' })),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
     )
   })
 

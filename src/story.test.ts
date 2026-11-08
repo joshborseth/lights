@@ -2,6 +2,8 @@ import { Option } from 'effect'
 import { Command, given, message, model, story } from 'foldkit/story'
 import { describe, expect, test } from 'vitest'
 
+import * as Slider from '@/components/ui/slider'
+
 import {
   IncomingFrame,
   type LightState,
@@ -17,9 +19,11 @@ import {
   PresetEditor,
   SendFrame,
   SendFrameTwice,
+  SliderId,
   Target,
   WaitForThrottle,
   WaitToReconnect,
+  sliderDomId,
   update,
 } from './main'
 
@@ -57,6 +61,7 @@ const base: Model = {
   presets,
   drafts: [],
   maybeExpanded: Option.none(),
+  maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
   maybeProblem: Option.none(),
 }
@@ -213,6 +218,100 @@ describe('power', () => {
         }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+    )
+  })
+})
+
+describe('slider drag', () => {
+  const sliderId = SliderId.TargetBrightness({ target: orb })
+  const fromSlider = (sliderMessage: Slider.Message) =>
+    Message.GotSliderMessage({ sliderId, message: sliderMessage })
+  const fromActiveSlider = (sliderMessage: Slider.Message) =>
+    Message.GotActiveSliderMessage({ message: sliderMessage })
+
+  test('pressing the track starts a drag and sends through the throttle', () => {
+    story(
+      update,
+      given(base),
+      message(
+        fromSlider(
+          Slider.Message.PressedPointer({ value: 50, originValue: 200 }),
+        ),
+      ),
+      Command.expectHas(
+        SendFrame({ frame: frameOf('Orb/set', { brightness: 50 }) }),
+      ),
+      Command.expectHas(WaitForThrottle({ target: orb, kind: 'Brightness' })),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      model(next => {
+        expect(Option.isSome(next.maybeActiveSlider)).toBe(true)
+      }),
+    )
+  })
+
+  test('moves inside the window send only the last value', () => {
+    const draggingSlider = Slider.update(
+      Slider.init({ id: sliderDomId(sliderId), min: 1, max: 254, step: 1 }),
+      Slider.Message.PressedThumb({ originValue: 50 }),
+    ).model
+    story(
+      update,
+      given({
+        ...base,
+        drafts: [
+          {
+            target: orb,
+            setting: Setting.Brightness({ value: 50 }),
+            isDirty: false,
+          },
+        ],
+        maybeActiveSlider: Option.some({ sliderId, slider: draggingSlider }),
+      }),
+      message(fromActiveSlider(Slider.Message.MovedDragPointer({ value: 60 }))),
+      Command.expectNone(),
+      message(fromActiveSlider(Slider.Message.MovedDragPointer({ value: 70 }))),
+      Command.expectNone(),
+      message(
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      Command.expectHas(
+        SendFrame({ frame: frameOf('Orb/set', { brightness: 70 }) }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      model(next => {
+        expect(next.drafts).toHaveLength(0)
+      }),
+    )
+  })
+
+  test('releasing ends the drag and ignores later pointer moves', () => {
+    story(
+      update,
+      given(base),
+      message(
+        fromSlider(
+          Slider.Message.PressedPointer({ value: 50, originValue: 200 }),
+        ),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Brightness' }),
+      ),
+      message(fromActiveSlider(Slider.Message.ReleasedDragPointer())),
+      model(next => {
+        expect(Option.isNone(next.maybeActiveSlider)).toBe(true)
+      }),
+      message(fromActiveSlider(Slider.Message.MovedDragPointer({ value: 90 }))),
+      Command.expectNone(),
     )
   })
 })

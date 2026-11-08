@@ -36,7 +36,7 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 - A `Subscription` turns frames into Messages.
 - A `Command` sends each light command.
 - Effect `Schema` decodes each known topic at the boundary. Unknown topics are ignored.
-- Native range and color inputs handle brightness, temperature, and color. They work well on a phone and avoid one Slider Submodel per card.
+- The UI uses [foldcn](https://foldcn.elianiva.com) components, copied into `src/components/ui/`. Its Slider handles brightness and temperature with large touch targets. Only the slider being dragged keeps state, in `maybeActiveSlider`, so no bulb needs its own Slider Submodel. Foldcn has no color picker, so color stays a native input.
 
 The app is one screen, so it needs no client-side routes and no server fallback for deep links.
 

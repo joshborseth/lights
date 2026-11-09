@@ -1,4 +1,4 @@
-import { Array, Option, pipe } from 'effect'
+import { Array, Match, Option, pipe } from 'effect'
 import {
   AdditiveBlending,
   BackSide,
@@ -80,6 +80,7 @@ const LABEL_HEX = '#f4f2ee'
 
 const ORB_RADIUS = 0.1
 const ROUND_SEGMENTS = 28
+const BALL_HEIGHT_SEGMENTS = 18
 const HALO_MIN_SCALE = 1.3
 const HALO_LEVEL_SCALE = 2.3
 const HALO_BASE_OPACITY = 0.35
@@ -101,6 +102,7 @@ const LABEL_OPACITY = 0.62
 const TAP_SLOP_PX = 10
 const TAP_MAX_MS = 450
 const BULB_TAP_RADIUS_PX = 30
+const BULB_RENDER_ORDER = 1
 const HALO_TEXTURE_PX = 128
 
 const ROOM_VERTEX_SHADER = `
@@ -282,14 +284,33 @@ const roomWalls = <Geometry>(
   )
 
 const furnitureShape = (piece: Furniture): BufferGeometry =>
-  piece.shape === 'Round'
-    ? new CylinderGeometry(
-        (piece.width / 2) * piece.taper,
-        piece.width / 2,
-        piece.height,
-        ROUND_SEGMENTS,
-      )
-    : new BoxGeometry(piece.width, piece.height, piece.depth)
+  Match.value(piece.shape).pipe(
+    Match.withReturnType<BufferGeometry>(),
+    Match.when(
+      'Round',
+      () =>
+        new CylinderGeometry(
+          (piece.width / 2) * piece.taper,
+          piece.width / 2,
+          piece.height,
+          ROUND_SEGMENTS,
+        ),
+    ),
+    Match.when(
+      'Ball',
+      () =>
+        new SphereGeometry(
+          piece.width / 2,
+          ROUND_SEGMENTS,
+          BALL_HEIGHT_SEGMENTS,
+        ),
+    ),
+    Match.when(
+      'Box',
+      () => new BoxGeometry(piece.width, piece.height, piece.depth),
+    ),
+    Match.exhaustive,
+  )
 
 const furnitureGeometry = (piece: Furniture): BufferGeometry =>
   withColor(
@@ -554,7 +575,12 @@ export const createHouseScene = (
 
   const makeVisual = (bulb: HouseBulb): BulbVisual => {
     const root = new Group()
-    const orb = new MeshBasicMaterial({ color: OFF_BULB_HEX })
+    const orb = new MeshBasicMaterial({
+      color: OFF_BULB_HEX,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+    })
     const halo = new Sprite(
       new SpriteMaterial({
         ...Option.match(maybeHaloTexture, {
@@ -562,13 +588,17 @@ export const createHouseScene = (
           onSome: map => ({ map }),
         }),
         blending: AdditiveBlending,
+        depthTest: false,
         depthWrite: false,
         transparent: true,
         opacity: 0,
       }),
     )
     const pole = new Mesh(poleGeometry, poleMaterial)
-    root.add(new Mesh(orbGeometry, orb), pole, halo)
+    const orbMesh = new Mesh(orbGeometry, orb)
+    orbMesh.renderOrder = BULB_RENDER_ORDER
+    halo.renderOrder = BULB_RENDER_ORDER
+    root.add(orbMesh, pole, halo)
     scene.add(root)
     const visual: BulbVisual = {
       bulb,

@@ -1,68 +1,81 @@
-import { Schema } from 'effect'
+import { Array, Schema } from 'effect'
 
-// NOTE: A first pass at the real home, estimated from photos, so sizes are
-// approximate. North is the sliding door, x grows east, and z grows south. The
-// bedroom and bathroom were not photographed, so those two are guesses.
+// NOTE: Estimated from photos of each room, so sizes are approximate. North is
+// the living room window wall, x grows east, and z grows south. No photo shows
+// how the bedroom wing joins the kitchen, so the two doors on the great room's
+// west wall and the hallway between them are inferred.
 
-export const HOUSE_WIDTH = 9.6
-export const HOUSE_DEPTH = 13.4
-export const WALL_HEIGHT = 2.2
+export const HOUSE_WIDTH = 7.8
+export const HOUSE_DEPTH = 7.9
+export const WALL_HEIGHT = 2.3
 
-const GREAT_ROOM_WIDTH = 5.6
 const GREAT_ROOM = 'GreatRoom'
+const GREAT_ROOM_WEST = 3.6
+const GREAT_ROOM_WIDTH = 4.2
+const LIVING_ROOM_DEPTH = 3.3
+const KITCHEN_SOUTH = 6.9
+const BEDROOM_DEPTH = 3.4
+const BEDROOM_WING_MIDDLE = 4.6
+const STAIRS_WEST = 2.3
+const STAIRS_FOOT_X = 5.7
+const STAIRS_OPENING_WIDTH = 1.38
 
-const HARDWOOD_HEX = '#6b442d'
-const CARPET_HEX = '#7c7388'
-const TILE_HEX = '#94a7ad'
-const CABINET_HEX = '#e4e0d8'
-const COUNTER_HEX = '#d9d3c4'
+const FLOOR_HEX = '#6a4c37'
+const CABINET_HEX = '#e8e5de'
+const QUARTZ_HEX = '#e6e3dd'
 const STEEL_HEX = '#a3a5a7'
-const DARK_STEEL_HEX = '#44464a'
-const SOFA_HEX = '#5a5652'
-const SOFA_BACK_HEX = '#4e4a47'
-const ARMCHAIR_HEX = '#76705f'
-const DARK_WOOD_HEX = '#4a3324'
-const MEDIUM_WOOD_HEX = '#7a5634'
-const WHITE_HEX = '#ece9e2'
-const RUG_HEX = '#aaa596'
+const BRONZE_HEX = '#7b6c5c'
+const SOFA_HEX = '#8d8a82'
+const SOFA_BACK_HEX = '#7d7a73'
+const OAK_HEX = '#8a5a2e'
+const WHITE_HEX = '#f0ede6'
 const GLASS_HEX = '#121a26'
-const BLIND_HEX = '#d8d4c8'
-const SHADE_HEX = '#ead9ae'
-const DRUM_HEX = '#b8b3a6'
-const STONE_HEX = '#8a8375'
-const FAN_HEX = '#cfccc4'
+const TABLE_GLASS_HEX = '#a9bcc3'
+const SCREEN_HEX = '#14161c'
+const SHADE_HEX = '#f0d9a8'
 const FRAME_HEX = '#2c2a28'
-const SCREEN_HEX = '#1a2740'
+const GOLD_HEX = '#b08d3f'
 const PORCELAIN_HEX = '#e7ecee'
-const PILLOW_RED_HEX = '#94363a'
-const PILLOW_TAN_HEX = '#b5a98e'
-const BEDDING_HEX = '#c9c4d6'
-const PILLOW_HEX = '#ece8f2'
+const CURTAIN_HEX = '#c98a9c'
+const RUG_HEX = '#d9775a'
+const BEDDING_HEX = '#b9c4ae'
+const BED_FRAME_HEX = '#b4bdc0'
+const PILLOW_HEX = '#ece8e0'
+const WICKER_HEX = '#d8cdb4'
+const LANTERN_HEX = '#f2efe8'
+const CHERRY_HEX = '#b8302c'
+const CLOTHES_HEX = '#4a5266'
+const CLOTHES_LIGHT_HEX = '#8e8a94'
+const BOOK_RED_HEX = '#a8433f'
+const BOOK_TEAL_HEX = '#3f7f83'
+const BIN_HEX = '#c7c4bd'
+const CARDBOARD_HEX = '#a98a62'
+const COOKTOP_HEX = '#2e2e30'
 
+const COUNTER_HEIGHT = 0.88
+const COUNTER_THICKNESS = 0.04
 const STOOL_SEAT_HEIGHT = 0.64
-const DINING_SEAT_HEIGHT = 0.45
-const TABLE_HEIGHT = 0.73
-const COUNTER_HEIGHT = 0.9
-const ISLAND_HEIGHT = 0.92
-const UPPER_ELEVATION = 1.4
-const UPPER_HEIGHT = 0.72
-const LAMP_SHADE_HEIGHT = 0.26
-const LAMP_SHADE_RADIUS = 0.19
-const LAMP_SHADE_TAPER = 0.62
-const LAMP_BASE_HEIGHT = 0.34
-const DOME_HEIGHT = 0.2
-const DOME_ELEVATION = 1.72
-const DOME_RADIUS = 0.24
-const DOME_TAPER = 0.32
+const UPPER_ELEVATION = 1.45
+const UPPER_HEIGHT = 0.75
+const SILL_ELEVATION = 1.15
+const WINDOW_HEIGHT = 0.8
+const LANTERN_ELEVATION = 1.55
+const LANTERN_HEIGHT = 0.38
+const LANTERN_RADIUS = 0.13
+const TREAD_COUNT = 9
+const TREAD_RUN = 0.25
+const TREAD_RISE = 0.25
+const NOSING_HEIGHT = 0.03
 
 // MODEL
 
 export const RoomId = Schema.Literals([
   'LivingRoom',
-  'Dining',
   'Kitchen',
+  'Stairs',
   'Hallway',
   'Bedroom',
+  'Closet',
   'Bathroom',
 ])
 export type RoomId = typeof RoomId.Type
@@ -79,7 +92,7 @@ export type Furniture = Readonly<{
   height: number
   hex: string
   elevation: number
-  shape: 'Box' | 'Round'
+  shape: 'Box' | 'Round' | 'Ball'
   taper: number
   turn: number
 }>
@@ -111,7 +124,6 @@ const box = (
   height: number,
   hex: string,
   elevation = 0,
-  turn = 0,
 ): Furniture => ({
   x,
   z,
@@ -120,7 +132,7 @@ const box = (
   height,
   hex,
   elevation,
-  turn,
+  turn: 0,
   shape: 'Box',
   taper: 1,
 })
@@ -146,317 +158,504 @@ const round = (
   turn: 0,
 })
 
-const tableLamp = (
+const ball = (
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  radius: number,
+  hex: string,
+): Furniture => ({
+  x: centerX - radius,
+  z: centerZ - radius,
+  width: radius * 2,
+  depth: radius * 2,
+  height: radius * 2,
+  hex,
+  elevation: centerY - radius,
+  taper: 1,
+  shape: 'Ball',
+  turn: 0,
+})
+
+const counter = (
   x: number,
   z: number,
-  surface: number,
+  width: number,
+  depth: number,
 ): ReadonlyArray<Furniture> => [
-  round(x, z, 0.07, LAMP_BASE_HEIGHT, DARK_STEEL_HEX, surface),
-  round(
-    x,
-    z,
-    LAMP_SHADE_RADIUS,
-    LAMP_SHADE_HEIGHT,
-    SHADE_HEX,
-    surface + LAMP_BASE_HEIGHT,
-    LAMP_SHADE_TAPER,
+  box(x, z, width, depth, COUNTER_HEIGHT, CABINET_HEX),
+  box(
+    x - 0.02,
+    z - 0.02,
+    width + 0.04,
+    depth + 0.04,
+    COUNTER_THICKNESS,
+    QUARTZ_HEX,
+    COUNTER_HEIGHT,
   ),
 ]
 
-const tableLampSpot = (x: number, z: number, surface: number): LightSpot => ({
-  x,
-  y: surface + LAMP_BASE_HEIGHT + LAMP_SHADE_HEIGHT / 2,
-  z,
-})
-
-const domePendant = (x: number, z: number): ReadonlyArray<Furniture> => [
-  round(x, z, DOME_RADIUS, DOME_HEIGHT, STEEL_HEX, DOME_ELEVATION, DOME_TAPER),
-  round(x, z, 0.012, 0.3, STEEL_HEX, DOME_ELEVATION + DOME_HEIGHT),
+const northWindow = (x: number, width: number): ReadonlyArray<Furniture> => [
+  box(
+    x - 0.1,
+    0,
+    width + 0.2,
+    0.03,
+    WINDOW_HEIGHT + 0.2,
+    WHITE_HEX,
+    SILL_ELEVATION - 0.1,
+  ),
+  box(x, 0, width, 0.05, WINDOW_HEIGHT, GLASS_HEX, SILL_ELEVATION),
+  box(x - 0.04, 0, width + 0.08, 0.2, 0.03, WHITE_HEX, SILL_ELEVATION - 0.03),
 ]
 
-const domePendantSpot = (x: number, z: number): LightSpot => ({
+const wallArt = (
+  x: number,
+  z: number,
+  width: number,
+  depth: number,
+  height: number,
+  elevation: number,
+  hex = FRAME_HEX,
+): Furniture => box(x, z, width, depth, height, hex, elevation)
+
+const lanternPendant = (x: number, z: number): ReadonlyArray<Furniture> => [
+  round(x, z, LANTERN_RADIUS, LANTERN_HEIGHT, SHADE_HEX, LANTERN_ELEVATION),
+  round(x, z, LANTERN_RADIUS + 0.015, 0.03, STEEL_HEX, LANTERN_ELEVATION),
+  round(
+    x,
+    z,
+    LANTERN_RADIUS + 0.015,
+    0.03,
+    STEEL_HEX,
+    LANTERN_ELEVATION + LANTERN_HEIGHT - 0.03,
+  ),
+  round(
+    x,
+    z,
+    0.012,
+    WALL_HEIGHT - LANTERN_ELEVATION - LANTERN_HEIGHT,
+    STEEL_HEX,
+    LANTERN_ELEVATION + LANTERN_HEIGHT,
+  ),
+]
+
+const lanternSpot = (x: number, z: number): LightSpot => ({
   x,
-  y: DOME_ELEVATION - 0.04,
+  y: LANTERN_ELEVATION + LANTERN_HEIGHT / 2,
   z,
 })
 
 const barStool = (x: number, z: number): ReadonlyArray<Furniture> => [
-  box(x - 0.21, z - 0.21, 0.42, 0.42, 0.04, WHITE_HEX, STOOL_SEAT_HEIGHT),
-  box(x - 0.03, z - 0.03, 0.06, 0.06, STOOL_SEAT_HEIGHT, WHITE_HEX),
-  box(x - 0.2, z - 0.24, 0.4, 0.04, 0.38, WHITE_HEX, STOOL_SEAT_HEIGHT),
+  box(x - 0.2, z - 0.2, 0.4, 0.4, 0.04, BRONZE_HEX, STOOL_SEAT_HEIGHT),
+  box(x - 0.18, z - 0.18, 0.04, 0.04, STOOL_SEAT_HEIGHT, BRONZE_HEX),
+  box(x + 0.14, z - 0.18, 0.04, 0.04, STOOL_SEAT_HEIGHT, BRONZE_HEX),
+  box(x - 0.18, z + 0.14, 0.04, 0.04, STOOL_SEAT_HEIGHT, BRONZE_HEX),
+  box(x + 0.14, z + 0.14, 0.04, 0.04, STOOL_SEAT_HEIGHT, BRONZE_HEX),
+  box(x - 0.2, z - 0.22, 0.4, 0.03, 0.42, BRONZE_HEX, STOOL_SEAT_HEIGHT),
 ]
 
-const diningChair = (
-  x: number,
-  z: number,
-  backOffsetX: number,
-  backOffsetZ: number,
-): ReadonlyArray<Furniture> => [
-  box(x - 0.2, z - 0.2, 0.4, 0.4, 0.04, WHITE_HEX, DINING_SEAT_HEIGHT),
-  box(x - 0.03, z - 0.03, 0.06, 0.06, DINING_SEAT_HEIGHT, WHITE_HEX),
-  box(
-    x + backOffsetX - 0.17,
-    z + backOffsetZ - 0.17,
-    0.34,
-    0.34,
-    0.42,
-    WHITE_HEX,
-    DINING_SEAT_HEIGHT,
-  ),
-]
+const stairTread = (index: number): ReadonlyArray<Furniture> => {
+  const x = STAIRS_FOOT_X - (index + 1) * TREAD_RUN
+  const height = (index + 1) * TREAD_RISE
+  return [
+    box(x, KITCHEN_SOUTH + 0.04, TREAD_RUN, 0.92, height, WHITE_HEX),
+    box(
+      x - 0.02,
+      KITCHEN_SOUTH + 0.04,
+      TREAD_RUN + 0.02,
+      0.92,
+      NOSING_HEIGHT,
+      BRONZE_HEX,
+      height,
+    ),
+  ]
+}
 
 // ROOMS
 
-const OPEN_SOUTH: Door = { side: 'South', from: 0, width: GREAT_ROOM_WIDTH }
-const OPEN_NORTH: Door = { side: 'North', from: 0, width: GREAT_ROOM_WIDTH }
+const OPEN_LIVING_TO_KITCHEN_NORTH: Door = {
+  side: 'North',
+  from: GREAT_ROOM_WEST,
+  width: GREAT_ROOM_WIDTH,
+}
+const OPEN_LIVING_TO_KITCHEN_SOUTH: Door = {
+  ...OPEN_LIVING_TO_KITCHEN_NORTH,
+  side: 'South',
+}
+const HALLWAY_DOOR_FROM = 3.75
+const BATHROOM_DOOR_FROM = 5.4
+const BEDROOM_DOOR_FROM = 2.7
+const CLOSET_DOOR_FROM = 0.7
+const DOOR_WIDTH = 0.8
+const CLOSET_DOOR_WIDTH = 1.5
 
-const CONSOLE_LAMP = { x: 4.55, z: 5.2, surface: 0.79 }
-const SIDE_TABLE_LAMP = { x: 0.55, z: 4.0, surface: 0.55 }
-const FLOOR_LAMP = { x: 4.62, z: 0.36 }
-const FLOOR_LAMP_HEIGHT = 1.28
+const ORB_LAMP = { x: 4.97, z: 0.12, radius: 0.13 }
+const SHROOM_LAMP = { x: 6.62, z: 0.12 }
+const SHROOM_STEM_HEIGHT = 0.14
 
 const LIVING_ROOM: HouseRoom = {
   id: 'LivingRoom',
   label: 'Living Room',
-  labelSpot: { x: 2.6, z: 3.2 },
-  x: 0,
+  labelSpot: { x: 5.7, z: 2.75 },
+  x: GREAT_ROOM_WEST,
   z: 0,
   width: GREAT_ROOM_WIDTH,
-  depth: 5.4,
-  floorHex: HARDWOOD_HEX,
+  depth: LIVING_ROOM_DEPTH,
+  floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
-  doors: [OPEN_SOUTH],
+  doors: [OPEN_LIVING_TO_KITCHEN_SOUTH],
   furniture: [
-    box(0.8, 1.0, 3.6, 4.1, 0.015, RUG_HEX),
-    box(0.85, 0.05, 1.5, 0.45, 0.75, MEDIUM_WOOD_HEX),
-    box(0.92, 0.2, 1.36, 0.06, 0.78, SCREEN_HEX, 0.78),
-    box(2.75, 0, 1.6, 0.04, 2.05, GLASS_HEX),
-    box(2.15, 0, 0.6, 0.07, 2.05, BLIND_HEX),
-    box(4.55, 0.27, 1.1, 0.46, 1.12, STONE_HEX, 0, -Math.PI / 4),
-    box(4.5, 0.24, 1.2, 0.52, 0.06, WHITE_HEX, 1.12, -Math.PI / 4),
-    round(FLOOR_LAMP.x, FLOOR_LAMP.z, 0.14, 0.03, DARK_STEEL_HEX),
-    round(FLOOR_LAMP.x, FLOOR_LAMP.z, 0.016, FLOOR_LAMP_HEIGHT, DARK_STEEL_HEX),
-    round(
-      FLOOR_LAMP.x,
-      FLOOR_LAMP.z,
-      0.22,
-      0.32,
-      SHADE_HEX,
-      FLOOR_LAMP_HEIGHT,
-      LAMP_SHADE_TAPER,
+    ...northWindow(4.06, 1.1),
+    ...northWindow(6.41, 1.09),
+    ball(
+      ORB_LAMP.x,
+      SILL_ELEVATION + ORB_LAMP.radius,
+      ORB_LAMP.z,
+      ORB_LAMP.radius,
+      LANTERN_HEX,
     ),
-    box(2.45, 4.08, 3.1, 0.95, 0.44, SOFA_HEX),
-    box(2.45, 4.75, 3.1, 0.28, 0.86, SOFA_BACK_HEX),
-    box(4.6, 1.3, 0.95, 2.78, 0.44, SOFA_HEX),
-    box(5.27, 1.3, 0.28, 3.5, 0.86, SOFA_BACK_HEX),
-    box(4.65, 1.5, 0.3, 0.46, 0.3, PILLOW_RED_HEX, 0.44),
-    box(4.65, 2.2, 0.3, 0.46, 0.3, PILLOW_TAN_HEX, 0.44),
-    box(0.25, 2.5, 0.95, 0.95, 0.44, ARMCHAIR_HEX),
-    box(0.25, 2.5, 0.28, 0.95, 0.85, ARMCHAIR_HEX),
-    box(0.15, 3.6, 0.85, 0.85, SIDE_TABLE_LAMP.surface, DARK_WOOD_HEX),
-    ...tableLamp(SIDE_TABLE_LAMP.x, SIDE_TABLE_LAMP.z, SIDE_TABLE_LAMP.surface),
-    box(2.95, 5.03, 2.25, 0.36, 0.05, WHITE_HEX, CONSOLE_LAMP.surface - 0.05),
-    box(2.95, 5.03, 0.05, 0.36, CONSOLE_LAMP.surface - 0.05, WHITE_HEX),
-    box(5.15, 5.03, 0.05, 0.36, CONSOLE_LAMP.surface - 0.05, WHITE_HEX),
-    ...tableLamp(CONSOLE_LAMP.x, CONSOLE_LAMP.z, CONSOLE_LAMP.surface),
-    round(2.9, 2.6, 0.13, 0.14, FAN_HEX, 2.02),
-    box(2.3, 2.53, 1.2, 0.14, 0.015, FAN_HEX, 2.06, Math.PI / 4),
-    box(2.3, 2.53, 1.2, 0.14, 0.015, FAN_HEX, 2.06, -Math.PI / 4),
-    box(0, 0.9, 0.04, 1.2, 1.3, BLIND_HEX, 0.8),
-    box(0, 2.5, 0.04, 1.2, 1.3, BLIND_HEX, 0.8),
-    box(5.56, 1.7, 0.04, 0.48, 0.66, FRAME_HEX, 1.25),
-    box(5.56, 2.4, 0.04, 0.48, 0.66, FRAME_HEX, 1.25),
-    box(5.56, 3.1, 0.04, 0.48, 0.66, FRAME_HEX, 1.25),
+    round(
+      SHROOM_LAMP.x,
+      SHROOM_LAMP.z,
+      0.06,
+      SHROOM_STEM_HEIGHT,
+      LANTERN_HEX,
+      SILL_ELEVATION,
+    ),
+    round(
+      SHROOM_LAMP.x,
+      SHROOM_LAMP.z,
+      0.15,
+      0.11,
+      LANTERN_HEX,
+      SILL_ELEVATION + SHROOM_STEM_HEIGHT,
+      0.5,
+    ),
+    box(4.2, 0.04, 0.42, 0.15, 0.12, BOOK_RED_HEX, SILL_ELEVATION),
+    box(6.98, 0.04, 0.46, 0.15, 0.2, BOOK_TEAL_HEX, SILL_ELEVATION),
+    wallArt(5.42, 0, 0.8, 0.04, 1.15, 0.92),
+    box(4.85, 0.25, 2.9, 0.9, 0.42, SOFA_HEX),
+    box(4.85, 0.05, 2.9, 0.22, 0.8, SOFA_BACK_HEX),
+    box(6.85, 1.15, 0.65, 1.2, 0.42, SOFA_HEX),
+    box(7.5, 0.27, 0.25, 2.08, 0.8, SOFA_BACK_HEX),
+    box(4.85, 0.27, 0.12, 0.9, 0.58, SOFA_BACK_HEX),
+    box(5.1, 0.3, 0.42, 0.26, 0.26, SOFA_BACK_HEX, 0.42),
+    box(6.0, 0.3, 0.42, 0.26, 0.26, SOFA_BACK_HEX, 0.42),
+    box(7.2, 1.4, 0.26, 0.42, 0.26, SOFA_BACK_HEX, 0.42),
+    box(5.7, 1.4, 0.82, 0.8, 0.03, TABLE_GLASS_HEX, 0.4),
+    box(5.76, 1.46, 0.7, 0.68, 0.3, WICKER_HEX),
+    box(3.62, 1.05, 0.48, 2.2, 0.82, OAK_HEX),
+    box(3.8, 1.5, 0.06, 1.1, 0.62, SCREEN_HEX, 0.82),
+    wallArt(3.6, 0.35, 0.04, 0.72, 1.25, 0.9),
+    box(4.2, 0.05, 0.56, 0.45, 0.62, BIN_HEX),
+    box(4.26, 0.6, 0.44, 0.36, 0.36, CARDBOARD_HEX),
+    wallArt(7.76, 0.75, 0.04, 0.42, 0.55, 1.35),
+    wallArt(7.76, 1.65, 0.04, 0.42, 0.55, 1.2),
   ],
   lightSpots: [
-    tableLampSpot(CONSOLE_LAMP.x, CONSOLE_LAMP.z, CONSOLE_LAMP.surface),
-    tableLampSpot(
-      SIDE_TABLE_LAMP.x,
-      SIDE_TABLE_LAMP.z,
-      SIDE_TABLE_LAMP.surface,
-    ),
-    { x: FLOOR_LAMP.x, y: FLOOR_LAMP_HEIGHT + 0.16, z: FLOOR_LAMP.z },
+    {
+      x: ORB_LAMP.x,
+      y: SILL_ELEVATION + ORB_LAMP.radius,
+      z: ORB_LAMP.z,
+    },
+    {
+      x: SHROOM_LAMP.x,
+      y: SILL_ELEVATION + SHROOM_STEM_HEIGHT + 0.06,
+      z: SHROOM_LAMP.z,
+    },
   ],
 }
 
-const DINING_TABLE = { x: 1.3, z: 6.4 }
-
-const DINING: HouseRoom = {
-  id: 'Dining',
-  label: 'Dining',
-  labelSpot: { x: 3.8, z: 6.4 },
-  x: 0,
-  z: 5.4,
-  width: GREAT_ROOM_WIDTH,
-  depth: 2,
-  floorHex: HARDWOOD_HEX,
-  lightSpace: GREAT_ROOM,
-  doors: [OPEN_NORTH, OPEN_SOUTH],
-  furniture: [
-    round(DINING_TABLE.x, DINING_TABLE.z, 0.56, 0.04, WHITE_HEX, TABLE_HEIGHT),
-    round(DINING_TABLE.x, DINING_TABLE.z, 0.12, TABLE_HEIGHT, WHITE_HEX),
-    ...diningChair(DINING_TABLE.x, DINING_TABLE.z - 0.78, 0, -0.18),
-    ...diningChair(DINING_TABLE.x, DINING_TABLE.z + 0.78, 0, 0.18),
-    ...diningChair(DINING_TABLE.x + 0.8, DINING_TABLE.z, 0.18, 0),
-    round(DINING_TABLE.x, DINING_TABLE.z, 0.42, 0.26, DRUM_HEX, 1.78),
-    round(DINING_TABLE.x, DINING_TABLE.z, 0.012, 0.18, DRUM_HEX, 2.04),
-    box(0, 5.65, 0.04, 1.5, 1.25, GLASS_HEX, 0.85),
-  ],
-  lightSpots: [],
-}
-
-const STOVE = { x: 1.9, width: 0.76 }
-const KITCHEN_SOUTH_RUN_END = 3.8
-const KITCHEN_BACK_Z = 10.8
-const PENDANT_Z = 9.25
-const LEFT_PENDANT_X = 2.15
-const RIGHT_PENDANT_X = 3.3
+const PENDANT_Z = 4.2
+const FIRST_PENDANT_X = 7.0
+const SECOND_PENDANT_X = 6.2
+const STOOL_Z = 3.5
+const STOVE = { z: 5, depth: 0.76 }
+const SINK_RUN_DEPTH = 0.58
+const SINK_RUN_Z = KITCHEN_SOUTH - SINK_RUN_DEPTH - 0.02
 
 const KITCHEN: HouseRoom = {
   id: 'Kitchen',
   label: 'Kitchen',
-  labelSpot: { x: 2.7, z: 10.35 },
-  x: 0,
-  z: 7.4,
+  labelSpot: { x: 5.5, z: 5.5 },
+  x: GREAT_ROOM_WEST,
+  z: LIVING_ROOM_DEPTH,
   width: GREAT_ROOM_WIDTH,
-  depth: 4,
-  floorHex: HARDWOOD_HEX,
+  depth: KITCHEN_SOUTH - LIVING_ROOM_DEPTH,
+  floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
-  doors: [OPEN_NORTH, { side: 'South', from: 4, width: 1 }],
+  doors: [
+    OPEN_LIVING_TO_KITCHEN_NORTH,
+    { side: 'West', from: HALLWAY_DOOR_FROM, width: DOOR_WIDTH },
+    { side: 'West', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH },
+    {
+      side: 'South',
+      from: STAIRS_FOOT_X,
+      width: STAIRS_OPENING_WIDTH,
+    },
+  ],
   furniture: [
+    box(5.5, 3.9, 2.3, 0.8, COUNTER_HEIGHT, CABINET_HEX),
+    box(5.45, 3.66, 2.35, 1.06, COUNTER_THICKNESS, QUARTZ_HEX, COUNTER_HEIGHT),
+    box(7.3, 3.95, 0.48, 0.4, 0.3, WHITE_HEX, COUNTER_HEIGHT),
+    ...barStool(FIRST_PENDANT_X, STOOL_Z),
+    ...barStool(SECOND_PENDANT_X, STOOL_Z),
+    ...lanternPendant(FIRST_PENDANT_X, PENDANT_Z),
+    ...lanternPendant(SECOND_PENDANT_X, PENDANT_Z),
+    ...counter(7.18, 4.72, 0.62, STOVE.z - 4.72),
+    ...counter(7.18, STOVE.z + STOVE.depth, 0.62, 0.36),
+    box(7.04, STOVE.z, 0.76, STOVE.depth, 0.94, WHITE_HEX),
+    box(7.04, STOVE.z, 0.72, STOVE.depth, 0.02, COOKTOP_HEX, 0.94),
+    box(7.36, STOVE.z, 0.44, STOVE.depth, 0.14, WHITE_HEX, 1.55),
+    box(7.47, 3.75, 0.33, 1.2, UPPER_HEIGHT, CABINET_HEX, UPPER_ELEVATION),
+    box(7.06, 6.12, 0.74, 0.76, 1.72, WHITE_HEX),
+    ...counter(GREAT_ROOM_WEST, SINK_RUN_Z, 2.05, SINK_RUN_DEPTH),
+    box(GREAT_ROOM_WEST + 0.02, SINK_RUN_Z - 0.03, 0.6, 0.03, 0.84, WHITE_HEX),
+    box(4.6, SINK_RUN_Z + 0.1, 0.62, 0.36, 0.01, STEEL_HEX, 0.925),
     box(
-      0,
-      KITCHEN_BACK_Z,
-      KITCHEN_SOUTH_RUN_END,
-      0.6,
-      COUNTER_HEIGHT,
-      CABINET_HEX,
-    ),
-    box(
-      0,
-      KITCHEN_BACK_Z - 0.02,
-      KITCHEN_SOUTH_RUN_END + 0.02,
-      0.62,
-      0.04,
-      COUNTER_HEX,
-      COUNTER_HEIGHT,
-    ),
-    box(
-      STOVE.x,
-      KITCHEN_BACK_Z - 0.04,
-      STOVE.width,
-      0.64,
-      0.96,
-      DARK_STEEL_HEX,
-    ),
-    box(STOVE.x, 10.98, STOVE.width, 0.42, 0.12, STEEL_HEX, 1.48),
-    box(
-      0.4,
-      11.07,
-      STOVE.x - 0.4,
+      GREAT_ROOM_WEST + 0.1,
+      KITCHEN_SOUTH - 0.33,
+      0.8,
       0.33,
       UPPER_HEIGHT,
       CABINET_HEX,
       UPPER_ELEVATION,
     ),
-    box(
-      STOVE.x + STOVE.width,
-      11.07,
-      KITCHEN_SOUTH_RUN_END - STOVE.x - STOVE.width,
-      0.33,
-      UPPER_HEIGHT,
-      CABINET_HEX,
-      UPPER_ELEVATION,
-    ),
-    box(0, 8.3, 0.6, 2.5, COUNTER_HEIGHT, CABINET_HEX),
-    box(0, 8.3, 0.62, 2.5, 0.04, COUNTER_HEX, COUNTER_HEIGHT),
-    box(0, 8.75, 0.04, 1.3, 0.85, GLASS_HEX, 1.1),
-    box(0, 10.3, 0.33, 0.77, UPPER_HEIGHT, CABINET_HEX, UPPER_ELEVATION),
-    box(5, 7.8, 0.6, 1.8, 0.78, CABINET_HEX),
-    box(4.98, 7.8, 0.62, 1.8, 0.04, COUNTER_HEX, 0.78),
-    box(5.27, 7.8, 0.33, 1.8, UPPER_HEIGHT, CABINET_HEX, UPPER_ELEVATION),
-    box(4.85, 9.65, 0.75, 0.9, 1.78, STEEL_HEX),
-    box(1.6, 8.7, 2.3, 1.1, ISLAND_HEIGHT - 0.04, CABINET_HEX),
-    box(1.56, 8.66, 2.38, 1.18, 0.04, COUNTER_HEX, ISLAND_HEIGHT - 0.04),
-    ...barStool(2.05, 8.34),
-    ...barStool(2.75, 8.34),
-    ...barStool(3.45, 8.34),
-    ...domePendant(LEFT_PENDANT_X, PENDANT_Z),
-    ...domePendant(RIGHT_PENDANT_X, PENDANT_Z),
   ],
   lightSpots: [
-    domePendantSpot(LEFT_PENDANT_X, PENDANT_Z),
-    domePendantSpot(RIGHT_PENDANT_X, PENDANT_Z),
+    lanternSpot(FIRST_PENDANT_X, PENDANT_Z),
+    lanternSpot(SECOND_PENDANT_X, PENDANT_Z),
   ],
+}
+
+const STAIRS: HouseRoom = {
+  id: 'Stairs',
+  label: 'Stairs',
+  labelSpot: { x: 6.75, z: 7.4 },
+  x: STAIRS_WEST,
+  z: KITCHEN_SOUTH,
+  width: HOUSE_WIDTH - STAIRS_WEST,
+  depth: HOUSE_DEPTH - KITCHEN_SOUTH,
+  floorHex: FLOOR_HEX,
+  lightSpace: GREAT_ROOM,
+  doors: [
+    {
+      side: 'North',
+      from: STAIRS_FOOT_X,
+      width: STAIRS_OPENING_WIDTH,
+    },
+  ],
+  furniture: [
+    ...Array.flatten(Array.makeBy(TREAD_COUNT, stairTread)),
+    box(
+      STAIRS_WEST,
+      KITCHEN_SOUTH + 0.04,
+      STAIRS_FOOT_X - TREAD_COUNT * TREAD_RUN - STAIRS_WEST,
+      0.92,
+      TREAD_COUNT * TREAD_RISE,
+      WHITE_HEX,
+    ),
+    wallArt(5.95, HOUSE_DEPTH - 0.04, 0.55, 0.04, 0.7, 1.15, GOLD_HEX),
+    box(6.7, HOUSE_DEPTH - 0.34, 0.7, 0.32, 1.15, STEEL_HEX),
+  ],
+  lightSpots: [],
 }
 
 const HALLWAY: HouseRoom = {
   id: 'Hallway',
   label: 'Hallway',
-  labelSpot: { x: 4.6, z: 12.2 },
-  x: 3.6,
-  z: 11.4,
-  width: 2,
-  depth: 1.6,
-  floorHex: HARDWOOD_HEX,
+  labelSpot: { x: 3.1, z: 4.0 },
+  x: GREAT_ROOM_WEST - 1,
+  z: BEDROOM_DEPTH,
+  width: 1,
+  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
+  floorHex: FLOOR_HEX,
   lightSpace: 'Hallway',
   doors: [
-    { side: 'North', from: 4, width: 1 },
-    { side: 'West', from: 11.8, width: 0.8 },
-    { side: 'East', from: 11.7, width: 1 },
+    { side: 'North', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
+    { side: 'East', from: HALLWAY_DOOR_FROM, width: DOOR_WIDTH },
   ],
   furniture: [],
   lightSpots: [],
 }
 
+const CLOSET: HouseRoom = {
+  id: 'Closet',
+  label: 'Closet',
+  labelSpot: { x: 1.3, z: 4.05 },
+  x: 0,
+  z: BEDROOM_DEPTH,
+  width: GREAT_ROOM_WEST - 1,
+  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
+  floorHex: FLOOR_HEX,
+  lightSpace: 'Closet',
+  doors: [{ side: 'North', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH }],
+  furniture: [
+    box(0.35, BEDROOM_WING_MIDDLE - 0.45, 0.9, 0.42, 1.55, CLOTHES_HEX, 0.3),
+    box(
+      1.25,
+      BEDROOM_WING_MIDDLE - 0.45,
+      0.95,
+      0.42,
+      1.55,
+      CLOTHES_LIGHT_HEX,
+      0.3,
+    ),
+    box(0.25, BEDROOM_WING_MIDDLE - 0.42, 2.1, 0.4, 0.03, WHITE_HEX, 1.95),
+  ],
+  lightSpots: [],
+}
+
+const SPHERE_LANTERN = { x: 0.8, y: 1.85, z: 1.75, radius: 0.42 }
+const UFO_LIGHT = { x: 2, z: 1.7 }
+const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
+const FAN = { x: 2.45, z: 0.3 }
+
 const BEDROOM: HouseRoom = {
   id: 'Bedroom',
   label: 'Bedroom',
-  labelSpot: { x: 8.3, z: 12.55 },
-  x: 5.6,
-  z: 9,
-  width: 4,
-  depth: 4,
-  floorHex: CARPET_HEX,
+  labelSpot: { x: 3.0, z: 1.7 },
+  x: 0,
+  z: 0,
+  width: GREAT_ROOM_WEST,
+  depth: BEDROOM_DEPTH,
+  floorHex: FLOOR_HEX,
   lightSpace: 'Bedroom',
-  doors: [{ side: 'West', from: 11.7, width: 1 }],
-  furniture: [
-    box(7.4, 9.9, 2.15, 1.9, 0.5, BEDDING_HEX),
-    box(8.98, 10, 0.5, 1.7, 0.66, PILLOW_HEX),
-    box(9.05, 9.3, 0.5, 0.5, 0.5, DARK_WOOD_HEX),
-    box(9.05, 11.9, 0.5, 0.5, 0.5, DARK_WOOD_HEX),
-    ...tableLamp(9.3, 9.55, 0.5),
-    ...tableLamp(9.3, 12.15, 0.5),
-    box(6, 9.05, 2.3, 0.55, 1.4, DARK_WOOD_HEX),
+  doors: [
+    { side: 'South', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH },
+    { side: 'South', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
   ],
-  lightSpots: [tableLampSpot(9.3, 9.55, 0.5), tableLampSpot(9.3, 12.15, 0.5)],
+  furniture: [
+    box(BED.x, BED.z - 0.05, 0.1, BED.width + 0.1, 0.85, BED_FRAME_HEX),
+    box(BED.x + 0.1, BED.z, BED.length - 0.1, BED.width, 0.3, BED_FRAME_HEX),
+    box(
+      BED.x + 0.1,
+      BED.z,
+      BED.length - 0.1,
+      BED.width,
+      0.26,
+      BEDDING_HEX,
+      0.3,
+    ),
+    box(BED.x + 0.15, BED.z + 0.1, 0.42, 0.6, 0.14, PILLOW_HEX, 0.56),
+    box(BED.x + 0.15, BED.z + 0.85, 0.42, 0.6, 0.14, PILLOW_HEX, 0.56),
+    round(BED.x + 0.75, BED.z + 0.75, 0.19, 0.05, PILLOW_HEX, 0.56),
+    box(0.03, 0.2, 0.6, 1.1, 0.04, OAK_HEX, 0.72),
+    box(0.08, 0.25, 0.05, 1.0, 0.72, WHITE_HEX),
+    box(0.12, 0.5, 0.06, 0.6, 0.36, SCREEN_HEX, 0.76),
+    box(0.75, 0.5, 0.48, 0.5, 0.5, BIN_HEX),
+    box(0.75, 0.46, 0.48, 0.08, 0.55, BIN_HEX, 0.5),
+    ...northWindow(0.85, 0.8),
+    box(0.85, 0.05, 0.8, 0.02, 0.72, PILLOW_HEX, SILL_ELEVATION + 0.06),
+    box(1.45, 0.02, 1.1, 0.08, 0.2, WHITE_HEX, 0.08),
+    box(1.85, 0, 0.28, 0.14, 0.22, BOOK_TEAL_HEX, 1.4),
+    wallArt(2.3, 0, 0.32, 0.05, 0.3, 1.45, CLOTHES_HEX),
+    round(FAN.x, FAN.z, 0.16, 0.03, FRAME_HEX),
+    round(FAN.x, FAN.z, 0.02, 1.1, FRAME_HEX),
+    ball(FAN.x, 1.22, FAN.z, 0.2, FRAME_HEX),
+    box(2.7, 0.05, 0.85, 0.46, 1.25, OAK_HEX),
+    box(2.85, 0, 0.55, 0.03, 0.62, PORCELAIN_HEX, 1.42),
+    round(3.25, 0.32, 0.01, 0.42, CHERRY_HEX, 1.88),
+    ball(3.25, 1.76, 0.32, 0.13, CHERRY_HEX),
+    wallArt(0, 2.05, 0.03, 0.62, 0.55, 1.1, WICKER_HEX),
+    round(SPHERE_LANTERN.x, SPHERE_LANTERN.z, 0.008, 0.05, FRAME_HEX, 2.25),
+    ball(
+      SPHERE_LANTERN.x,
+      SPHERE_LANTERN.y,
+      SPHERE_LANTERN.z,
+      SPHERE_LANTERN.radius,
+      LANTERN_HEX,
+    ),
+    round(
+      UFO_LIGHT.x,
+      UFO_LIGHT.z,
+      0.2,
+      0.09,
+      STEEL_HEX,
+      WALL_HEIGHT - 0.09,
+      0.9,
+    ),
+  ],
+  lightSpots: [
+    {
+      x: SPHERE_LANTERN.x,
+      y: SPHERE_LANTERN.y,
+      z: SPHERE_LANTERN.z,
+    },
+    { x: UFO_LIGHT.x, y: WALL_HEIGHT - 0.14, z: UFO_LIGHT.z },
+  ],
 }
+
+const VANITY = { x: 1.5, depth: 0.55, width: 1.35 }
+const VANITY_TOP = 0.86
+const BATHROOM_ORB = { x: 1.65, z: 4.92, radius: 0.13 }
 
 const BATHROOM: HouseRoom = {
   id: 'Bathroom',
   label: 'Bathroom',
-  labelSpot: { x: 2.2, z: 12.45 },
-  x: 0.8,
-  z: 11.4,
-  width: 2.8,
-  depth: 2,
-  floorHex: TILE_HEX,
+  labelSpot: { x: 2.75, z: 6.05 },
+  x: 0,
+  z: BEDROOM_WING_MIDDLE,
+  width: GREAT_ROOM_WEST,
+  depth: KITCHEN_SOUTH - BEDROOM_WING_MIDDLE,
+  floorHex: FLOOR_HEX,
   lightSpace: 'Bathroom',
-  doors: [{ side: 'East', from: 11.8, width: 0.8 }],
+  doors: [{ side: 'East', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
-    box(0.9, 11.5, 1.75, 0.8, 0.55, PORCELAIN_HEX),
-    box(2.75, 12.82, 0.75, 0.52, 0.82, CABINET_HEX),
-    box(1.2, 12.75, 0.42, 0.6, 0.42, PORCELAIN_HEX),
-    round(2.2, 12.4, 0.16, 0.08, PORCELAIN_HEX, 2.08),
+    box(0.05, BEDROOM_WING_MIDDLE + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
+    box(0.77, BEDROOM_WING_MIDDLE + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
+    box(
+      VANITY.x,
+      BEDROOM_WING_MIDDLE + 0.02,
+      VANITY.width,
+      VANITY.depth,
+      0.82,
+      CABINET_HEX,
+    ),
+    box(
+      VANITY.x,
+      BEDROOM_WING_MIDDLE,
+      VANITY.width + 0.02,
+      VANITY.depth + 0.02,
+      COUNTER_THICKNESS,
+      QUARTZ_HEX,
+      VANITY_TOP - COUNTER_THICKNESS,
+    ),
+    box(2.05, 4.72, 0.5, 0.3, 0.01, PORCELAIN_HEX, VANITY_TOP),
+    ball(
+      BATHROOM_ORB.x,
+      VANITY_TOP + BATHROOM_ORB.radius,
+      BATHROOM_ORB.z,
+      BATHROOM_ORB.radius,
+      LANTERN_HEX,
+    ),
+    box(0.9, BEDROOM_WING_MIDDLE, 0.9, 0.33, 0.62, CABINET_HEX, 1.55),
+    box(1.85, BEDROOM_WING_MIDDLE, 1.05, 0.03, 0.72, GOLD_HEX, 1.2),
+    box(0, 5.15, 0.05, 0.65, 0.85, GLASS_HEX, 1.15),
+    box(1.6, 5.3, 0.85, 0.5, 0.015, RUG_HEX),
+    box(0.35, 6.12, 1.75, 0.76, 0.52, PORCELAIN_HEX),
+    box(0.35, 6.08, 1.75, 0.03, 1.85, CURTAIN_HEX, 0.15),
+    box(2.15, 5.92, 0.9, 0.02, 1.15, TABLE_GLASS_HEX),
+    box(2.55, 6.66, 0.42, 0.22, 0.75, PORCELAIN_HEX),
+    round(2.76, 6.4, 0.19, 0.42, PORCELAIN_HEX),
+    wallArt(3.1, KITCHEN_SOUTH - 0.03, 0.26, 0.03, 0.34, 1.35),
   ],
-  lightSpots: [{ x: 2.2, y: 2.02, z: 12.4 }],
+  lightSpots: [
+    {
+      x: BATHROOM_ORB.x,
+      y: VANITY_TOP + BATHROOM_ORB.radius,
+      z: BATHROOM_ORB.z,
+    },
+  ],
 }
 
 export const ROOMS: ReadonlyArray<HouseRoom> = [
   LIVING_ROOM,
-  DINING,
   KITCHEN,
+  STAIRS,
   HALLWAY,
   BEDROOM,
+  CLOSET,
   BATHROOM,
 ]

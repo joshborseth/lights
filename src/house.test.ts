@@ -9,7 +9,15 @@ import {
   sharesLight,
   wallSpans,
 } from './house'
-import { type HouseRoom, ROOMS } from './housePlan'
+import {
+  HOUSE_DEPTH,
+  HOUSE_WIDTH,
+  type HouseRoom,
+  ROOMS,
+  WALL_HEIGHT,
+} from './housePlan'
+
+const EDGE_TOLERANCE = 1e-9
 
 const light = (name: string, address: string): Light => ({
   name,
@@ -197,47 +205,119 @@ describe('wallSpans', () => {
   })
 
   test('adjoining rooms cut matching door gaps in their shared walls', () => {
-    const doorRanges = (roomId: string, side: string) =>
+    const doorsBetween = (
+      roomId: string,
+      side: string,
+      neighborFrom: number,
+      neighborTo: number,
+    ) =>
       ROOMS.find(candidate => candidate.id === roomId)
-        ?.doors.filter(door => door.side === side)
+        ?.doors.filter(
+          door =>
+            door.side === side &&
+            door.from >= neighborFrom &&
+            door.from + door.width <= neighborTo,
+        )
         .map(({ from, width }) => [from, width])
 
-    expect(doorRanges('LivingRoom', 'South')).toEqual(
-      doorRanges('Dining', 'North'),
+    expect(doorsBetween('LivingRoom', 'South', 0, 8)).toEqual(
+      doorsBetween('Kitchen', 'North', 0, 8),
     )
-    expect(doorRanges('Dining', 'South')).toEqual(
-      doorRanges('Kitchen', 'North'),
+    expect(doorsBetween('Kitchen', 'South', 0, 8)).toEqual(
+      doorsBetween('Stairs', 'North', 0, 8),
     )
-    expect(doorRanges('Kitchen', 'South')).toEqual(
-      doorRanges('Hallway', 'North'),
+    expect(doorsBetween('Kitchen', 'West', 3.4, 4.6)).toEqual(
+      doorsBetween('Hallway', 'East', 3.4, 4.6),
     )
-    expect(doorRanges('Hallway', 'West')).toEqual(
-      doorRanges('Bathroom', 'East'),
+    expect(doorsBetween('Kitchen', 'West', 4.6, 6.9)).toEqual(
+      doorsBetween('Bathroom', 'East', 4.6, 6.9),
     )
-    expect(doorRanges('Hallway', 'East')).toEqual(doorRanges('Bedroom', 'West'))
+    expect(doorsBetween('Bedroom', 'South', 0, 2.6)).toEqual(
+      doorsBetween('Closet', 'North', 0, 2.6),
+    )
+    expect(doorsBetween('Bedroom', 'South', 2.6, 3.6)).toEqual(
+      doorsBetween('Hallway', 'North', 2.6, 3.6),
+    )
+  })
+})
+
+describe('the floor plan', () => {
+  test('stays inside the house and no two rooms overlap', () => {
+    ROOMS.forEach((first, index) => {
+      expect(first.x).toBeGreaterThanOrEqual(0)
+      expect(first.z).toBeGreaterThanOrEqual(0)
+      expect(first.x + first.width - HOUSE_WIDTH).toBeLessThan(EDGE_TOLERANCE)
+      expect(first.z + first.depth - HOUSE_DEPTH).toBeLessThan(EDGE_TOLERANCE)
+
+      ROOMS.slice(index + 1).forEach(second => {
+        const isOverlapping =
+          first.x < second.x + second.width &&
+          second.x < first.x + first.width &&
+          first.z < second.z + second.depth &&
+          second.z < first.z + first.depth
+
+        expect([first.id, second.id, isOverlapping]).toEqual([
+          first.id,
+          second.id,
+          false,
+        ])
+      })
+    })
+  })
+
+  test('keeps every fixture inside its room and below the ceiling', () => {
+    ROOMS.forEach(({ id, lightSpots }) => {
+      lightSpots.forEach(({ x, y, z }) => {
+        expect(roomAt(x, z)).toEqual(Option.some(id))
+        expect(y).toBeLessThan(WALL_HEIGHT)
+      })
+    })
+  })
+
+  test('mounts each real bulb on the fixture it is named after', () => {
+    const lights = [
+      light('Bedroom Sphere', 'a'),
+      light('Bedroom UFO', 'b'),
+      light('Living Room Orb', 'c'),
+      light('Living Room Shroom', 'd'),
+    ]
+    const bulbs = placedBulbs(lights, [], {})
+    const named = (name: string) => bulbs.find(bulb => bulb.name === name)
+
+    expect(named('Bedroom Sphere')?.y).toBeLessThan(
+      named('Bedroom UFO')?.y ?? 0,
+    )
+    expect(named('Living Room Orb')?.x).toBeLessThan(
+      named('Living Room Shroom')?.x ?? 0,
+    )
+    expect(bulbs.every(({ isMounted }) => isMounted)).toBe(true)
   })
 })
 
 describe('sharesLight', () => {
   test('rooms in the open great room light each other', () => {
     expect(sharesLight('Kitchen', 'LivingRoom')).toBe(true)
-    expect(sharesLight('Dining', 'Kitchen')).toBe(true)
+    expect(sharesLight('Stairs', 'Kitchen')).toBe(true)
   })
 
   test('light stays inside a closed room', () => {
     expect(sharesLight('Bedroom', 'Hallway')).toBe(false)
+    expect(sharesLight('Bedroom', 'Closet')).toBe(false)
     expect(sharesLight('Kitchen', 'Bathroom')).toBe(false)
   })
 })
 
 describe('roomAt', () => {
   test('finds the room under a floor point', () => {
-    expect(roomAt(1, 1)).toEqual(Option.some('LivingRoom'))
-    expect(roomAt(8, 11)).toEqual(Option.some('Bedroom'))
+    expect(roomAt(5, 1)).toEqual(Option.some('LivingRoom'))
+    expect(roomAt(1, 1)).toEqual(Option.some('Bedroom'))
+    expect(roomAt(1, 6)).toEqual(Option.some('Bathroom'))
+    expect(roomAt(6, 7.5)).toEqual(Option.some('Stairs'))
   })
 
   test('finds nothing outside the house', () => {
     expect(roomAt(-1, 1)).toEqual(Option.none())
+    expect(roomAt(1, 7.5)).toEqual(Option.none())
     expect(roomAt(6, 20)).toEqual(Option.none())
   })
 })

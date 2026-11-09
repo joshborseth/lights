@@ -472,7 +472,8 @@ const STAIRS: HouseRoom = {
 }
 
 const SPHERE_LANTERN = { x: 0.8, y: 1.85, z: 1.75, radius: 0.42 }
-const UFO_LIGHT = { x: 2, z: 1.7 }
+const CEILING_LIGHT = { x: 2, z: 1.7 }
+const UFO_LIGHT = { x: 3.25, z: 4.25, elevation: 1.96, height: 0.09 }
 const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
 const FAN = { x: 2.45, z: 0.3 }
 
@@ -531,12 +532,29 @@ const BEDROOM: HouseRoom = {
       LANTERN_HEX,
     ),
     round(
-      UFO_LIGHT.x,
-      UFO_LIGHT.z,
+      CEILING_LIGHT.x,
+      CEILING_LIGHT.z,
       0.2,
       0.09,
       STEEL_HEX,
       WALL_HEIGHT - 0.09,
+      0.9,
+    ),
+    round(
+      UFO_LIGHT.x,
+      UFO_LIGHT.z,
+      0.008,
+      WALL_HEIGHT - UFO_LIGHT.elevation - UFO_LIGHT.height,
+      FRAME_HEX,
+      UFO_LIGHT.elevation + UFO_LIGHT.height,
+    ),
+    round(
+      UFO_LIGHT.x,
+      UFO_LIGHT.z,
+      0.2,
+      UFO_LIGHT.height,
+      STEEL_HEX,
+      UFO_LIGHT.elevation,
       0.9,
     ),
   ],
@@ -546,7 +564,7 @@ const BEDROOM: HouseRoom = {
       y: SPHERE_LANTERN.y,
       z: SPHERE_LANTERN.z,
     },
-    { x: UFO_LIGHT.x, y: WALL_HEIGHT - 0.14, z: UFO_LIGHT.z },
+    { x: UFO_LIGHT.x, y: UFO_LIGHT.elevation - 0.05, z: UFO_LIGHT.z },
   ],
 }
 

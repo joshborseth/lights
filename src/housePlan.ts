@@ -4,7 +4,9 @@ import { Array, Schema } from 'effect'
 // the living room window wall, x grows east, and z grows south. The bedroom door
 // opens straight off the great room. The closet is deliberately left out and its
 // floor counts as bedroom, so the bedroom is one rectangle that reaches the
-// bathroom. The bathroom door's position is inferred.
+// bathroom. The bathroom door is on the kitchen wall, and its position along that
+// wall is inferred. The bathroom keeps its modeled outline, so its walkway and
+// tub are drawn shorter than they really are.
 
 export const HOUSE_WIDTH = 7.8
 export const HOUSE_DEPTH = 7.9
@@ -50,6 +52,9 @@ const BOOK_TEAL_HEX = '#3f7f83'
 const BIN_HEX = '#c7c4bd'
 const CARDBOARD_HEX = '#a98a62'
 const COOKTOP_HEX = '#2e2e30'
+const PARTITION_HEX = '#a09c97'
+const TILE_HEX = '#55585e'
+const VACUUM_HEX = '#2f4fa3'
 
 const COUNTER_HEIGHT = 0.88
 const COUNTER_THICKNESS = 0.04
@@ -548,11 +553,34 @@ const BEDROOM: HouseRoom = {
 const VANITY = { x: 1.5, depth: 0.55, width: 1.35 }
 const VANITY_TOP = 0.86
 const BATHROOM_ORB = { x: 1.65, z: 4.92, radius: 0.13 }
+const LAUNDRY_DEPTH = 0.62
+const APPLIANCE_WIDTH = 0.72
+const APPLIANCE_HEIGHT = 0.92
+const PARTITION = { z: 5.7, depth: 0.06, end: 0.9 }
+const TUB_NORTH = PARTITION.z + PARTITION.depth
+const TUB = { x: 0.05, width: 0.8, depth: KITCHEN_SOUTH - 0.02 - TUB_NORTH }
+const CURTAIN_X = TUB.x + TUB.width + 0.02
+const CURTAIN_ELEVATION = 0.15
+const CURTAIN_HEIGHT = 1.85
+const TOILET_X = 1.31
+const FAR_WALL_ART_Z = KITCHEN_SOUTH - 0.03
+
+const washerOrDryer = (x: number): ReadonlyArray<Furniture> => [
+  box(
+    x,
+    BEDROOM_DEPTH + 0.02,
+    APPLIANCE_WIDTH,
+    LAUNDRY_DEPTH,
+    APPLIANCE_HEIGHT,
+    WHITE_HEX,
+  ),
+  box(x, BEDROOM_DEPTH + 0.02, APPLIANCE_WIDTH, 0.08, 0.14, WHITE_HEX, 0.92),
+]
 
 const BATHROOM: HouseRoom = {
   id: 'Bathroom',
   label: 'Bathroom',
-  labelSpot: { x: 2.75, z: 6.05 },
+  labelSpot: { x: 2.75, z: 5.9 },
   x: 0,
   z: BEDROOM_DEPTH,
   width: GREAT_ROOM_WEST,
@@ -562,8 +590,8 @@ const BATHROOM: HouseRoom = {
   annexes: [],
   doors: [{ side: 'East', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
-    box(0.05, BEDROOM_DEPTH + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
-    box(0.77, BEDROOM_DEPTH + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
+    ...washerOrDryer(0.05),
+    ...washerOrDryer(0.77),
     box(
       VANITY.x,
       BEDROOM_DEPTH + 0.02,
@@ -589,16 +617,85 @@ const BATHROOM: HouseRoom = {
       BATHROOM_ORB.radius,
       LANTERN_HEX,
     ),
-    box(0.9, BEDROOM_DEPTH, 0.9, 0.33, 0.62, CABINET_HEX, 1.55),
-    box(1.85, BEDROOM_DEPTH, 1.05, 0.03, 0.72, GOLD_HEX, 1.2),
-    box(0, 5.15, 0.05, 0.65, 0.85, GLASS_HEX, 1.15),
-    box(1.6, 5.3, 0.85, 0.5, 0.015, RUG_HEX),
-    box(0.35, 6.12, 1.75, 0.76, 0.52, PORCELAIN_HEX),
-    box(0.35, 6.08, 1.75, 0.03, 1.85, CURTAIN_HEX, 0.15),
-    box(2.15, 5.92, 0.9, 0.02, 1.15, TABLE_GLASS_HEX),
-    box(2.55, 6.66, 0.42, 0.22, 0.75, PORCELAIN_HEX),
-    round(2.76, 6.4, 0.19, 0.42, PORCELAIN_HEX),
-    wallArt(3.1, KITCHEN_SOUTH - 0.03, 0.26, 0.03, 0.34, 1.35),
+    box(VANITY.x, BEDROOM_DEPTH, VANITY.width, 0.02, 0.3, TILE_HEX, VANITY_TOP),
+    box(0.5, BEDROOM_DEPTH, 1.1, 0.33, 0.62, CABINET_HEX, 1.55),
+    box(1.62, BEDROOM_DEPTH, 1.23, 0.03, 0.78, GOLD_HEX, 1.18),
+    box(1.6, 5.2, 0.85, 0.5, 0.015, RUG_HEX),
+    box(2.92, BEDROOM_DEPTH + 0.05, 0.4, 0.46, 0.6, FRAME_HEX),
+    box(3.36, BEDROOM_DEPTH + 0.05, 0.22, 0.4, 0.85, WHITE_HEX),
+
+    box(0, 5.02, 0.03, 0.66, 1, WHITE_HEX, 1.05),
+    box(0, 5.1, 0.05, 0.5, 0.8, GLASS_HEX, 1.15),
+    box(0.05, 5.26, 0.36, 0.42, 0.68, FRAME_HEX),
+
+    box(
+      0,
+      PARTITION.z,
+      PARTITION.end,
+      PARTITION.depth,
+      WALL_HEIGHT,
+      PARTITION_HEX,
+    ),
+    box(
+      PARTITION.end,
+      PARTITION.z + 0.02,
+      0.62,
+      0.02,
+      WALL_HEIGHT - 0.3,
+      TABLE_GLASS_HEX,
+    ),
+    box(PARTITION.end + 0.02, PARTITION.z - 0.2, 0.26, 0.1, 0.08, VACUUM_HEX),
+    round(PARTITION.end + 0.08, PARTITION.z - 0.12, 0.015, 1.05, VACUUM_HEX),
+    box(
+      PARTITION.end + 0.02,
+      PARTITION.z - 0.16,
+      0.14,
+      0.14,
+      0.2,
+      FRAME_HEX,
+      1.05,
+    ),
+
+    box(TUB.x, TUB_NORTH, TUB.width, TUB.depth, 0.52, PORCELAIN_HEX),
+    box(
+      TUB.x + 0.07,
+      TUB_NORTH + 0.08,
+      TUB.width - 0.14,
+      TUB.depth - 0.16,
+      0.01,
+      BIN_HEX,
+      0.52,
+    ),
+    box(
+      CURTAIN_X,
+      TUB_NORTH,
+      0.03,
+      TUB.depth,
+      CURTAIN_HEIGHT,
+      CURTAIN_HEX,
+      CURTAIN_ELEVATION,
+    ),
+    box(
+      CURTAIN_X,
+      TUB_NORTH,
+      0.03,
+      TUB.depth,
+      0.02,
+      STEEL_HEX,
+      CURTAIN_ELEVATION + CURTAIN_HEIGHT,
+    ),
+
+    box(TOILET_X - 0.21, 6.66, 0.42, 0.22, 0.75, PORCELAIN_HEX),
+    round(TOILET_X, 6.42, 0.19, 0.42, PORCELAIN_HEX),
+    box(TOILET_X - 0.21, 6.18, 0.42, 0.2, 0.18, OAK_HEX),
+    box(1.57, 6.62, 0.16, 0.16, 0.3, WHITE_HEX),
+    box(1.78, 6.4, 0.45, 0.48, 0.2, WICKER_HEX),
+    box(1.82, 6.46, 0.37, 0.36, 0.01, FRAME_HEX, 0.2),
+    box(1.8, 6.05, 0.4, 0.3, 0.015, WICKER_HEX),
+    wallArt(1.8, FAR_WALL_ART_Z, 0.32, 0.03, 0.42, 1.25, GOLD_HEX),
+    wallArt(2.32, FAR_WALL_ART_Z, 0.3, 0.03, 0.38, 1.55, STEEL_HEX),
+    box(3.54, 6.35, 0.03, 0.5, 0.02, STEEL_HEX, 1.15),
+    box(3.52, 6.38, 0.06, 0.44, 0.7, PILLOW_HEX, 0.47),
   ],
   lightSpots: [
     {

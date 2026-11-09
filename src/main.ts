@@ -54,7 +54,8 @@ import {
   savePresetFrame,
   settingFrame,
 } from './domain'
-import { HouseSelection, RoomId } from './house'
+import { HouseSelection } from './house'
+import { RoomId } from './housePlan'
 import * as Manage from './manage'
 
 const CONNECTION_TIMEOUT_MS = 5000

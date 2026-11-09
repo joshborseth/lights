@@ -138,6 +138,20 @@ describe('house view', () => {
     )
   })
 
+  test('a room whose group is empty lists the bulbs placed in it', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        lights: [light('Kitchen Light', 'k')],
+        groups: [{ name: 'Kitchen', memberAddresses: [] }],
+        states: { 'Kitchen Light': on },
+      }),
+      click(role('button', { name: 'Kitchen' })),
+      expect(role('slider', { name: 'Kitchen Light brightness' })).toExist(),
+    )
+  })
+
   test('tapping outside the house clears the selection', () => {
     scene(
       { update, view },

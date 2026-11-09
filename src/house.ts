@@ -18,36 +18,26 @@ import {
   WARM_WHITE,
   hueSaturationToHex,
 } from './domain'
+import {
+  type Door,
+  type HouseRoom,
+  ROOMS,
+  RoomId,
+  type WallSide,
+} from './housePlan'
 
-// NOTE: This floor plan is a stand-in until the real house is modeled. Rooms
-// light up by matching a Zigbee2MQTT group to a room label, so replacing this
-// data is enough to move the 3D view to a different layout.
-
-export const HOUSE_WIDTH = 12
-export const HOUSE_DEPTH = 9
-export const WALL_HEIGHT = 1.5
-export const BULB_HEIGHT = 1.85
-
+const FREE_STANDING_HEIGHT = 1.85
 const MIN_LIT_LEVEL = 0.3
-const DOOR_WIDTH = 1
-const ARCHWAY_WIDTH = 2
 
 // MODEL
-
-export const RoomId = Schema.Literals([
-  'LivingRoom',
-  'Kitchen',
-  'Bedroom',
-  'Bathroom',
-  'Hallway',
-])
-export type RoomId = typeof RoomId.Type
 
 export const HouseBulb = Schema.Struct({
   name: Schema.String,
   roomId: RoomId,
   x: Schema.Number,
+  y: Schema.Number,
   z: Schema.Number,
+  isMounted: Schema.Boolean,
   hex: Schema.String,
   level: Schema.Number,
 })
@@ -60,135 +50,7 @@ export const HouseSelection = defineTaggedUnion({
 })
 export type HouseSelection = typeof HouseSelection.Type
 
-export type WallSide = 'North' | 'South' | 'East' | 'West'
-
-export type Door = Readonly<{ side: WallSide; from: number; width: number }>
-
-export type Furniture = Readonly<{
-  x: number
-  z: number
-  width: number
-  depth: number
-  height: number
-  hex: string
-  elevation?: number
-}>
-
-export type HouseRoom = Readonly<{
-  id: RoomId
-  label: string
-  x: number
-  z: number
-  width: number
-  depth: number
-  floorHex: string
-  doors: ReadonlyArray<Door>
-  furniture: ReadonlyArray<Furniture>
-}>
-
 export type WallSpan = Readonly<{ from: number; to: number }>
-
-const LIVING_ROOM: HouseRoom = {
-  id: 'LivingRoom',
-  label: 'Living Room',
-  x: 0,
-  z: 0,
-  width: 7,
-  depth: 5,
-  floorHex: '#9a7b58',
-  doors: [
-    { side: 'South', from: 4, width: DOOR_WIDTH },
-    { side: 'East', from: 1.5, width: ARCHWAY_WIDTH },
-  ],
-  furniture: [
-    { x: 1.4, z: 1.4, width: 3.4, depth: 2.2, height: 0.02, hex: '#5c6b82' },
-    { x: 1.5, z: 0.15, width: 3.2, depth: 1, height: 0.45, hex: '#6e7480' },
-    { x: 1.5, z: 0.15, width: 3.2, depth: 0.3, height: 0.85, hex: '#626874' },
-    { x: 2.4, z: 2.1, width: 1.4, depth: 0.7, height: 0.38, hex: '#5a4230' },
-    { x: 0.1, z: 1.4, width: 0.45, depth: 2.2, height: 0.5, hex: '#3b3b42' },
-  ],
-}
-
-const KITCHEN: HouseRoom = {
-  id: 'Kitchen',
-  label: 'Kitchen',
-  x: 7,
-  z: 0,
-  width: 5,
-  depth: 5,
-  floorHex: '#a3a5a8',
-  doors: [
-    { side: 'West', from: 1.5, width: ARCHWAY_WIDTH },
-    { side: 'South', from: 9, width: DOOR_WIDTH },
-  ],
-  furniture: [
-    { x: 7.5, z: 0.05, width: 4.45, depth: 0.65, height: 0.9, hex: '#d6d2c8' },
-    { x: 11.3, z: 0.7, width: 0.65, depth: 2.6, height: 0.9, hex: '#d6d2c8' },
-    { x: 8.4, z: 2.3, width: 2, depth: 1, height: 0.92, hex: '#54605c' },
-  ],
-}
-
-const BEDROOM: HouseRoom = {
-  id: 'Bedroom',
-  label: 'Bedroom',
-  x: 7,
-  z: 5,
-  width: 5,
-  depth: 4,
-  floorHex: '#7c7388',
-  doors: [
-    { side: 'West', from: 6.5, width: DOOR_WIDTH },
-    { side: 'North', from: 9, width: DOOR_WIDTH },
-  ],
-  furniture: [
-    { x: 9.7, z: 6, width: 2.2, depth: 1.9, height: 0.5, hex: '#c9c4d6' },
-    { x: 11.3, z: 6.1, width: 0.5, depth: 1.7, height: 0.66, hex: '#ece8f2' },
-    { x: 11.45, z: 5.5, width: 0.5, depth: 0.45, height: 0.5, hex: '#5a4230' },
-    { x: 7.5, z: 8.4, width: 2.4, depth: 0.55, height: 1.3, hex: '#4d4238' },
-  ],
-}
-
-const BATHROOM: HouseRoom = {
-  id: 'Bathroom',
-  label: 'Bathroom',
-  x: 0,
-  z: 5,
-  width: 3,
-  depth: 4,
-  floorHex: '#94a7ad',
-  doors: [{ side: 'East', from: 6.5, width: DOOR_WIDTH }],
-  furniture: [
-    { x: 0.1, z: 5.1, width: 0.95, depth: 1.9, height: 0.55, hex: '#e7ecee' },
-    { x: 2.35, z: 8.15, width: 0.6, depth: 0.75, height: 0.8, hex: '#dfe5e8' },
-    { x: 0.2, z: 8.2, width: 0.45, depth: 0.65, height: 0.42, hex: '#eef1f2' },
-  ],
-}
-
-const HALLWAY: HouseRoom = {
-  id: 'Hallway',
-  label: 'Hallway',
-  x: 3,
-  z: 5,
-  width: 4,
-  depth: 4,
-  floorHex: '#856f58',
-  doors: [
-    { side: 'North', from: 4, width: DOOR_WIDTH },
-    { side: 'West', from: 6.5, width: DOOR_WIDTH },
-    { side: 'East', from: 6.5, width: DOOR_WIDTH },
-  ],
-  furniture: [
-    { x: 4, z: 8.55, width: 1.8, depth: 0.4, height: 0.8, hex: '#5a4230' },
-  ],
-}
-
-export const ROOMS: ReadonlyArray<HouseRoom> = [
-  LIVING_ROOM,
-  KITCHEN,
-  BEDROOM,
-  BATHROOM,
-  HALLWAY,
-]
 
 // DERIVED
 
@@ -229,27 +91,52 @@ export const wallSpans = (
 export const roomById = (roomId: RoomId): Option.Option<HouseRoom> =>
   Array.findFirst(ROOMS, room => room.id === roomId)
 
+const isNamedAfterRoom = (name: string, room: HouseRoom): boolean =>
+  String.toLowerCase(name) === String.toLowerCase(room.label)
+
 export const groupOfRoom = (
   room: HouseRoom,
   groups: ReadonlyArray<Group>,
 ): Option.Option<Group> =>
   Array.findFirst(
     groups,
-    group => String.toLowerCase(group.name) === String.toLowerCase(room.label),
+    group =>
+      isNamedAfterRoom(group.name, room) &&
+      Array.isReadonlyArrayNonEmpty(group.memberAddresses),
   )
+
+const isMemberOfRoomGroup = (
+  light: Light,
+  room: HouseRoom,
+  groups: ReadonlyArray<Group>,
+): boolean =>
+  Option.exists(groupOfRoom(room, groups), group =>
+    Array.contains(group.memberAddresses, light.address),
+  )
+
+const startsWithRoomName = (light: Light, room: HouseRoom): boolean =>
+  String.startsWith(String.toLowerCase(room.label))(
+    String.toLowerCase(light.name),
+  )
+
+const DEFAULT_ROOM_ID: RoomId = 'Hallway'
 
 const roomIdOfLight = (light: Light, groups: ReadonlyArray<Group>): RoomId =>
   pipe(
-    ROOMS,
-    Array.findFirst(room =>
-      Option.exists(groupOfRoom(room, groups), group =>
-        Array.contains(group.memberAddresses, light.address),
-      ),
+    Array.findFirst(ROOMS, room => isMemberOfRoomGroup(light, room, groups)),
+    Option.orElse(() =>
+      Array.findFirst(ROOMS, room => startsWithRoomName(light, room)),
     ),
     Option.match({
-      onNone: () => 'Hallway',
+      onNone: () => DEFAULT_ROOM_ID,
       onSome: room => room.id,
     }),
+  )
+
+export const sharesLight = (first: RoomId, second: RoomId): boolean =>
+  Option.exists(
+    Option.all([roomById(first), roomById(second)]),
+    ([firstRoom, secondRoom]) => firstRoom.lightSpace === secondRoom.lightSpace,
   )
 
 const lookOf = (
@@ -270,20 +157,28 @@ const lookOf = (
     }),
   )
 
-const spotInRoom = (
+const freeStandingSpot = (
   room: HouseRoom,
   index: number,
   count: number,
-): Readonly<{ x: number; z: number }> => {
+): Readonly<{ x: number; y: number; z: number; isMounted: boolean }> => {
   const columns = Math.ceil(Math.sqrt(count))
   const rows = Math.ceil(count / columns)
   const column = index % columns
   const row = Math.floor(index / columns)
   return {
     x: room.x + (room.width * (column + 0.5)) / columns,
+    y: FREE_STANDING_HEIGHT,
     z: room.z + (room.depth * (row + 0.5)) / rows,
+    isMounted: false,
   }
 }
+
+const spotInRoom = (room: HouseRoom, index: number, count: number) =>
+  Option.match(Array.get(room.lightSpots, index), {
+    onNone: () => freeStandingSpot(room, index, count),
+    onSome: spot => ({ ...spot, isMounted: true }),
+  })
 
 const byLightName = Order.mapInput(Order.String, (light: Light) => light.name)
 

@@ -3,13 +3,13 @@ import { describe, expect, test } from 'vitest'
 
 import { type Group, type Light, type LightState } from './domain'
 import {
-  type HouseRoom,
-  ROOMS,
   nearestBulbName,
   placedBulbs,
   roomAt,
+  sharesLight,
   wallSpans,
 } from './house'
+import { type HouseRoom, ROOMS } from './housePlan'
 
 const light = (name: string, address: string): Light => ({
   name,
@@ -40,8 +40,11 @@ const room = (overrides: Partial<HouseRoom>): HouseRoom => ({
   width: 10,
   depth: 4,
   floorHex: '#000000',
+  lightSpace: 'Test',
   doors: [],
   furniture: [],
+  lightSpots: [],
+  labelSpot: { x: 0, z: 0 },
   ...overrides,
 })
 
@@ -96,6 +99,41 @@ describe('placedBulbs', () => {
       expect(roomContaining(bulb.x, bulb.z)?.id).toBe('Kitchen')
     })
     expect(new Set(bulbs.map(bulb => `${bulb.x},${bulb.z}`)).size).toBe(7)
+  })
+
+  test('uses a bulb name when its room group is empty or missing', () => {
+    const named = [light('Kitchen Light Left', 'l'), light('Bathroom Orb', 'o')]
+    const roomIds = placedBulbs(
+      named,
+      [{ name: 'Kitchen', memberAddresses: [] }],
+      {},
+    ).map(bulb => [bulb.name, bulb.roomId])
+
+    expect(roomIds).toContainEqual(['Kitchen Light Left', 'Kitchen'])
+    expect(roomIds).toContainEqual(['Bathroom Orb', 'Bathroom'])
+  })
+
+  test('mounts bulbs on the fixtures of their room in name order', () => {
+    const bulbs = placedBulbs(
+      [light('Kitchen Light B', 'b'), light('Kitchen Light A', 'a')],
+      [],
+      {},
+    )
+    const spots = ROOMS.find(({ id }) => id === 'Kitchen')?.lightSpots
+
+    expect(bulbs.map(({ name }) => name)).toEqual([
+      'Kitchen Light A',
+      'Kitchen Light B',
+    ])
+    expect(bulbs.map(({ x, y, z }) => ({ x, y, z }))).toEqual(spots)
+    expect(bulbs.every(({ isMounted }) => isMounted)).toBe(true)
+  })
+
+  test('stands a bulb on its own when its room has no fixture left', () => {
+    const bulb = placedBulbs([light('Porch', 'p')], [], {})[0]
+
+    expect(bulb?.roomId).toBe('Hallway')
+    expect(bulb?.isMounted).toBe(false)
   })
 
   test('shows a bulb that is off or has not reported as dark', () => {
@@ -164,26 +202,38 @@ describe('wallSpans', () => {
         ?.doors.filter(door => door.side === side)
         .map(({ from, width }) => [from, width])
 
-    expect(doorRanges('LivingRoom', 'East')).toEqual(
-      doorRanges('Kitchen', 'West'),
-    )
     expect(doorRanges('LivingRoom', 'South')).toEqual(
+      doorRanges('Dining', 'North'),
+    )
+    expect(doorRanges('Dining', 'South')).toEqual(
+      doorRanges('Kitchen', 'North'),
+    )
+    expect(doorRanges('Kitchen', 'South')).toEqual(
       doorRanges('Hallway', 'North'),
     )
     expect(doorRanges('Hallway', 'West')).toEqual(
       doorRanges('Bathroom', 'East'),
     )
     expect(doorRanges('Hallway', 'East')).toEqual(doorRanges('Bedroom', 'West'))
-    expect(doorRanges('Kitchen', 'South')).toEqual(
-      doorRanges('Bedroom', 'North'),
-    )
+  })
+})
+
+describe('sharesLight', () => {
+  test('rooms in the open great room light each other', () => {
+    expect(sharesLight('Kitchen', 'LivingRoom')).toBe(true)
+    expect(sharesLight('Dining', 'Kitchen')).toBe(true)
+  })
+
+  test('light stays inside a closed room', () => {
+    expect(sharesLight('Bedroom', 'Hallway')).toBe(false)
+    expect(sharesLight('Kitchen', 'Bathroom')).toBe(false)
   })
 })
 
 describe('roomAt', () => {
   test('finds the room under a floor point', () => {
     expect(roomAt(1, 1)).toEqual(Option.some('LivingRoom'))
-    expect(roomAt(11, 8)).toEqual(Option.some('Bedroom'))
+    expect(roomAt(8, 11)).toEqual(Option.some('Bedroom'))
   })
 
   test('finds nothing outside the house', () => {

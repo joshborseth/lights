@@ -32,14 +32,13 @@ import {
 } from './domain'
 import {
   type HouseBulb,
-  type HouseRoom,
   HouseSelection,
-  ROOMS,
   groupOfRoom,
   placedBulbs,
   roomById,
 } from './house'
 import { houseSceneSpec } from './houseElement'
+import { type HouseRoom, ROOMS } from './housePlan'
 import {
   type Activity,
   AppTab,
@@ -366,7 +365,7 @@ const houseRoomPanelView = (
         ),
       )
       return Array.isReadonlyArrayEmpty(roomLights)
-        ? houseHintView(`No lights in the ${room.label} yet.`, h)
+        ? houseHintView(`${room.label} has no lights yet.`, h)
         : lightsCardView(model, roomLights, h)
     },
     onSome: group => {

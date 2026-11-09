@@ -32,29 +32,31 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 import {
-  BULB_HEIGHT,
+  HouseBulb,
+  HouseSelection,
+  nearestBulbName,
+  roomAt,
+  sharesLight,
+  wallSpans,
+} from './house'
+import {
   type Furniture,
   HOUSE_DEPTH,
   HOUSE_WIDTH,
-  HouseBulb,
   type HouseRoom,
-  HouseSelection,
   ROOMS,
   type RoomId,
   WALL_HEIGHT,
   type WallSide,
-  nearestBulbName,
-  roomAt,
-  wallSpans,
-} from './house'
+} from './housePlan'
 
 const MAX_BULBS_PER_ROOM = 10
 const MAX_DEVICE_PIXEL_RATIO = 2
 const FIELD_OF_VIEW = 32
 const CAMERA_NEAR = 1
 const CAMERA_FAR = 200
-const INITIAL_POLAR_ANGLE = 0.72
-const INITIAL_AZIMUTH = 0.42
+const INITIAL_POLAR_ANGLE = 0.62
+const INITIAL_AZIMUTH = -Math.PI / 2 + 0.22
 const FRAMING_MARGIN = 1.04
 const MIN_ZOOM = 0.42
 const MAX_ZOOM = 1.3
@@ -62,7 +64,7 @@ const MIN_POLAR_ANGLE = 0.12
 const MAX_POLAR_ANGLE = 1.2
 const ROTATE_DAMPING = 0.09
 
-const WALL_HEX = '#bdb8ae'
+const WALL_HEX = '#a09c97'
 const WALL_CAP_HEX = '#55555f'
 const WALL_CAP_THICKNESS = 0.14
 const WALL_SHELL_HEX = '#a7adc2'
@@ -76,12 +78,13 @@ const OFF_BULB_HEX = '#55555f'
 const SELECTION_HEX = '#ffffff'
 const LABEL_HEX = '#f4f2ee'
 
-const ORB_RADIUS = 0.12
+const ORB_RADIUS = 0.1
+const ROUND_SEGMENTS = 28
 const HALO_MIN_SCALE = 1.3
 const HALO_LEVEL_SCALE = 2.3
 const HALO_BASE_OPACITY = 0.35
 const HALO_LEVEL_OPACITY = 0.6
-const LIGHT_STRENGTH = 7
+const LIGHT_STRENGTH = 4.6
 const FADE_RATE = 0.2
 const FADE_EPSILON = 0.004
 const FULL_ORB_LEVEL = 0.3
@@ -93,7 +96,6 @@ const LABEL_FONT_PX = 64
 const LABEL_PADDING_PX = 16
 const LABEL_WORLD_HEIGHT = 0.5
 const LABEL_ELEVATION = 0.1
-const LABEL_INSET = 0.45
 const LABEL_OPACITY = 0.62
 
 const TAP_SLOP_PX = 10
@@ -164,6 +166,7 @@ type BulbVisual = {
   bulb: HouseBulb
   readonly root: Group
   readonly orb: MeshBasicMaterial
+  readonly pole: Mesh
   readonly halo: Sprite
   readonly currentColor: Color
   readonly targetColor: Color
@@ -278,13 +281,25 @@ const roomWalls = <Geometry>(
     ),
   )
 
+const furnitureShape = (piece: Furniture): BufferGeometry =>
+  piece.shape === 'Round'
+    ? new CylinderGeometry(
+        (piece.width / 2) * piece.taper,
+        piece.width / 2,
+        piece.height,
+        ROUND_SEGMENTS,
+      )
+    : new BoxGeometry(piece.width, piece.height, piece.depth)
+
 const furnitureGeometry = (piece: Furniture): BufferGeometry =>
   withColor(
-    new BoxGeometry(piece.width, piece.height, piece.depth).translate(
-      piece.x + piece.width / 2,
-      (piece.elevation ?? 0) + piece.height / 2,
-      piece.z + piece.depth / 2,
-    ),
+    furnitureShape(piece)
+      .rotateY(piece.turn)
+      .translate(
+        piece.x + piece.width / 2,
+        piece.elevation + piece.height / 2,
+        piece.z + piece.depth / 2,
+      ),
     piece.hex,
   )
 
@@ -352,11 +367,19 @@ const addHouseShell = (scene: Scene): void => {
     ),
   )
 
-  const slab = new BoxGeometry(
-    HOUSE_WIDTH + SLAB_MARGIN * 2,
-    SLAB_THICKNESS,
-    HOUSE_DEPTH + SLAB_MARGIN * 2,
-  ).translate(HOUSE_WIDTH / 2, -SLAB_THICKNESS / 2 - 0.01, HOUSE_DEPTH / 2)
+  const slab = mergedOrThrow(
+    Array.map(ROOMS, room =>
+      new BoxGeometry(
+        room.width + SLAB_MARGIN * 2,
+        SLAB_THICKNESS,
+        room.depth + SLAB_MARGIN * 2,
+      ).translate(
+        room.x + room.width / 2,
+        -SLAB_THICKNESS / 2 - 0.01,
+        room.z + room.depth / 2,
+      ),
+    ),
+  )
   scene.add(new Mesh(slab, new MeshBasicMaterial({ color: SLAB_HEX })))
 }
 
@@ -429,11 +452,7 @@ const addRoomLabel = (room: HouseRoom, scene: Scene): void => {
     }),
   )
   label.scale.set((LABEL_WORLD_HEIGHT * width) / height, LABEL_WORLD_HEIGHT, 1)
-  label.position.set(
-    room.x + room.width / 2,
-    LABEL_ELEVATION,
-    room.z + room.depth - LABEL_INSET,
-  )
+  label.position.set(room.labelSpot.x, LABEL_ELEVATION, room.labelSpot.z)
   label.renderOrder = 2
   scene.add(label)
 }
@@ -506,9 +525,9 @@ export const createHouseScene = (
   const poleGeometry = new CylinderGeometry(
     POLE_RADIUS,
     POLE_RADIUS,
-    BULB_HEIGHT,
+    1,
     6,
-  ).translate(0, -BULB_HEIGHT / 2, 0)
+  ).translate(0, -0.5, 0)
   const poleMaterial = new MeshBasicMaterial({ color: POLE_HEX })
 
   const selectionRing = new Mesh(
@@ -548,16 +567,14 @@ export const createHouseScene = (
         opacity: 0,
       }),
     )
-    root.add(
-      new Mesh(orbGeometry, orb),
-      new Mesh(poleGeometry, poleMaterial),
-      halo,
-    )
+    const pole = new Mesh(poleGeometry, poleMaterial)
+    root.add(new Mesh(orbGeometry, orb), pole, halo)
     scene.add(root)
     const visual: BulbVisual = {
       bulb,
       root,
       orb,
+      pole,
       halo,
       currentColor: new Color(bulb.hex),
       targetColor: new Color(bulb.hex),
@@ -610,7 +627,7 @@ export const createHouseScene = (
     Array.forEach(rooms, room => {
       const roomVisuals = Array.filter(
         globalThis.Array.from(visuals.values()),
-        visual => visual.bulb.roomId === room.id,
+        visual => sharesLight(visual.bulb.roomId, room.id),
       )
       const paired = Array.zip(room.slots, roomVisuals)
       Array.forEach(paired, ([slot, visual]) => {
@@ -801,7 +818,9 @@ export const createHouseScene = (
         const visual = visuals.get(bulb.name) ?? makeVisual(bulb)
         visual.bulb = bulb
         visual.targetColor.set(bulb.hex)
-        visual.root.position.set(bulb.x, BULB_HEIGHT, bulb.z)
+        visual.root.position.set(bulb.x, bulb.y, bulb.z)
+        visual.pole.visible = !bulb.isMounted
+        visual.pole.scale.y = bulb.y
       })
       applySelection()
       requestFrame()

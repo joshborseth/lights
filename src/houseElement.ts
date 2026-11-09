@@ -1,7 +1,8 @@
 import { Option, Schema } from 'effect'
 import { CustomElement } from 'foldkit'
 
-import { HouseBulb, HouseSelection, RoomId } from './house'
+import { HouseBulb, HouseSelection } from './house'
+import { RoomId } from './housePlan'
 import { type HouseScene } from './houseScene'
 
 const TAG = 'lights-house-scene'

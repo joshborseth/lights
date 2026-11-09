@@ -45,9 +45,10 @@ The app has four tabs, Lights, House, Manage, and Automations, kept in the Model
 
 The House tab shows the bulbs in a 3D cutaway of the home. Tapping a bulb or room opens the same controls as the Lights tab, so every command follows the rules below.
 
-- The floor plan in `src/house.ts` is a placeholder until the real home is modeled. A room lights up by matching a Zigbee2MQTT group to its label, ignoring case. A bulb with no matching room appears in the Hallway. Bulbs are spread evenly across their room, because real positions are not recorded yet.
+- The floor plan in `src/housePlan.ts` is a first pass estimated from photos of the kitchen, dining area, and living room. The bedroom, bathroom, and hallway are guesses. Each room lists its furniture and the fixtures that hold bulbs.
+- A bulb goes in the room whose non-empty group contains it, then the room its name starts with, and otherwise the Hallway. Within a room, bulbs take the fixtures in name order, and any extras stand on their own.
 - `src/houseElement.ts` is a custom element that takes the bulbs and selection as properties and reports taps as events. `src/houseScene.ts` holds the three.js renderer and loads only when the tab opens.
-- Each room has its own shader that adds up only that room's bulbs, so light stops at the walls without shadow maps. The scene shows reported state only, and draws a frame only when something moves or fades.
+- Each room has its own shader that adds up only the bulbs in its light space, so light stops at closed walls without shadow maps and carries across the open kitchen, dining area, and living room. The scene shows reported state only, and draws a frame only when something moves or fades.
 
 The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
 

@@ -2,8 +2,8 @@ import { Array, Schema } from 'effect'
 
 // NOTE: Estimated from photos of each room, so sizes are approximate. North is
 // the living room window wall, x grows east, and z grows south. The bedroom door
-// opens straight off the great room, and the closet cuts into the far corner of
-// the bedroom. The bathroom door's position is inferred.
+// opens straight off the great room. The closet in the bedroom's far corner is
+// deliberately left out, and the bathroom door's position is inferred.
 
 export const HOUSE_WIDTH = 7.8
 export const HOUSE_DEPTH = 7.9
@@ -16,7 +16,7 @@ const LIVING_ROOM_DEPTH = 3.3
 const KITCHEN_SOUTH = 6.9
 const BEDROOM_DEPTH = 3.4
 const BEDROOM_WING_MIDDLE = 4.6
-const CLOSET_WIDTH = 2.6
+const BEDROOM_ENTRY_WEST = 2.6
 const STAIRS_WEST = 2.3
 const STAIRS_FOOT_X = 5.7
 const STAIRS_OPENING_WIDTH = 1.38
@@ -46,7 +46,6 @@ const WICKER_HEX = '#d8cdb4'
 const LANTERN_HEX = '#f2efe8'
 const CHERRY_HEX = '#b8302c'
 const CLOTHES_HEX = '#4a5266'
-const CLOTHES_LIGHT_HEX = '#8e8a94'
 const BOOK_RED_HEX = '#a8433f'
 const BOOK_TEAL_HEX = '#3f7f83'
 const BIN_HEX = '#c7c4bd'
@@ -75,7 +74,6 @@ export const RoomId = Schema.Literals([
   'Kitchen',
   'Stairs',
   'Bedroom',
-  'Closet',
   'Bathroom',
 ])
 export type RoomId = typeof RoomId.Type
@@ -290,9 +288,7 @@ const OPEN_LIVING_TO_KITCHEN_SOUTH: Door = {
 }
 const BATHROOM_DOOR_FROM = 5.4
 const BEDROOM_DOOR_FROM = 2.5
-const CLOSET_DOOR_FROM = 0.7
 const DOOR_WIDTH = 0.8
-const CLOSET_DOOR_WIDTH = 1.5
 
 const ORB_LAMP = { x: 4.97, z: 0.12, radius: 0.13 }
 const SHROOM_LAMP = { x: 6.62, z: 0.12 }
@@ -471,49 +467,21 @@ const STAIRS: HouseRoom = {
   lightSpots: [],
 }
 
-const CLOSET: HouseRoom = {
-  id: 'Closet',
-  label: 'Closet',
-  labelSpot: { x: 1.3, z: 4.05 },
-  x: 0,
-  z: BEDROOM_DEPTH,
-  width: CLOSET_WIDTH,
-  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
-  floorHex: FLOOR_HEX,
-  lightSpace: 'Closet',
-  annexes: [],
-  doors: [{ side: 'North', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH }],
-  furniture: [
-    box(0.35, BEDROOM_WING_MIDDLE - 0.45, 0.9, 0.42, 1.55, CLOTHES_HEX, 0.3),
-    box(
-      1.25,
-      BEDROOM_WING_MIDDLE - 0.45,
-      0.95,
-      0.42,
-      1.55,
-      CLOTHES_LIGHT_HEX,
-      0.3,
-    ),
-    box(0.25, BEDROOM_WING_MIDDLE - 0.42, 2.1, 0.4, 0.03, WHITE_HEX, 1.95),
-  ],
-  lightSpots: [],
-}
-
 const SPHERE_LANTERN = { x: 0.8, y: 1.85, z: 1.75, radius: 0.42 }
 const UFO_LIGHT = { x: 2, z: 1.7 }
 const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
 const FAN = { x: 2.45, z: 0.3 }
 
 const BEDROOM_ENTRY: RoomArea = {
-  x: CLOSET_WIDTH,
+  x: BEDROOM_ENTRY_WEST,
   z: BEDROOM_DEPTH,
-  width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+  width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
   depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
   doors: [
     {
       side: 'North',
-      from: CLOSET_WIDTH,
-      width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+      from: BEDROOM_ENTRY_WEST,
+      width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
     },
   ],
 }
@@ -530,11 +498,10 @@ const BEDROOM: HouseRoom = {
   lightSpace: 'Bedroom',
   annexes: [BEDROOM_ENTRY],
   doors: [
-    { side: 'South', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH },
     {
       side: 'South',
-      from: CLOSET_WIDTH,
-      width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+      from: BEDROOM_ENTRY_WEST,
+      width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
     },
     { side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
   ],
@@ -669,6 +636,5 @@ export const ROOMS: ReadonlyArray<HouseRoom> = [
   KITCHEN,
   STAIRS,
   BEDROOM,
-  CLOSET,
   BATHROOM,
 ]

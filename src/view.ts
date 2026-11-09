@@ -26,9 +26,20 @@ import {
   PresetLook,
   SavablePresetLook,
   Setting,
+  WARM_WHITE,
   buildLightTree,
   shortLightName,
 } from './domain'
+import {
+  type HouseBulb,
+  type HouseRoom,
+  HouseSelection,
+  ROOMS,
+  groupOfRoom,
+  placedBulbs,
+  roomById,
+} from './house'
+import { houseSceneSpec } from './houseElement'
 import {
   type Activity,
   AppTab,
@@ -61,7 +72,6 @@ import {
 import { type Message as ManageMessage } from './manage'
 import * as ManageView from './manageView'
 
-const WARM_WHITE = '#ffdfae'
 const MIN_GLOW_LEVEL = 0.3
 const OFF_GLOW = 'oklch(0.42 0.008 70)'
 const SKELETON_GROUP_COUNT = 3
@@ -112,10 +122,15 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   ),
 })
 
-const APP_TABS: ReadonlyArray<AppTab> = ['Lights', 'Manage', 'Automations']
+const APP_TABS: ReadonlyArray<AppTab> = [
+  'Lights',
+  'House',
+  'Manage',
+  'Automations',
+]
 
 const TAB_BUTTON =
-  'flex-1 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground data-[selected]:bg-background data-[selected]:text-foreground'
+  'flex-auto rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground data-[selected]:bg-background data-[selected]:text-foreground'
 
 const tabsView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.submodel({
@@ -148,7 +163,8 @@ const tabsView = (model: Model, h: HtmlBuilder<Message>): Html =>
 
 const panelView = (tab: AppTab, model: Model, h: HtmlBuilder<Message>): Html =>
   Match.value(tab).pipe(
-    Match.when('Lights', () => bodyView(model, h)),
+    Match.when('Lights', () => bodyView(model, controlsView, h)),
+    Match.when('House', () => bodyView(model, houseView, h)),
     Match.when('Manage', () =>
       h.submodel({
         slotId: 'manage',
@@ -182,7 +198,11 @@ const panelView = (tab: AppTab, model: Model, h: HtmlBuilder<Message>): Html =>
     Match.exhaustive,
   )
 
-const bodyView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const bodyView = (
+  model: Model,
+  readyView: (model: Model, h: HtmlBuilder<Message>) => Html,
+  h: HtmlBuilder<Message>,
+): Html =>
   Startup.match(model.startup, {
     Loading: () =>
       isStrugglingToConnect(model.connection)
@@ -191,7 +211,7 @@ const bodyView = (model: Model, h: HtmlBuilder<Message>): Html =>
     Ready: () =>
       Array.isReadonlyArrayEmpty(model.lights)
         ? noLightsView(model, h)
-        : controlsView(model, h),
+        : readyView(model, h),
   })
 
 const controlsView = (model: Model, h: HtmlBuilder<Message>): Html => {
@@ -209,6 +229,155 @@ const controlsView = (model: Model, h: HtmlBuilder<Message>): Html => {
     [...lightTreeViews(model, h), presetsView(model, h)],
   )
 }
+
+const HOUSE_STAGE =
+  'block h-[min(46dvh,24rem)] w-full touch-none overflow-hidden rounded-xl border border-border bg-[radial-gradient(ellipse_at_50%_38%,oklch(0.26_0.02_270),oklch(0.16_0.01_270)_72%)]'
+
+const houseView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const isLive = canControl(model)
+  const bulbs = placedBulbs(model.lights, model.groups, model.states)
+  return h.div(
+    [h.Class('flex animate-in flex-col gap-4 duration-300 fade-in')],
+    [
+      Option.match(model.maybeHouseFailure, {
+        onNone: () => houseSceneView(model, bulbs, h),
+        onSome: reason => houseFailureView(reason, h),
+      }),
+      houseRoomChipsView(model, bulbs, h),
+      h.div(
+        [
+          h.Class(
+            cn('transition-opacity duration-300', !isLive && 'opacity-50'),
+          ),
+          h.Inert(!isLive),
+        ],
+        [houseSelectionView(model, bulbs, h)],
+      ),
+    ],
+  )
+}
+
+const houseSceneView = (
+  model: Model,
+  bulbs: ReadonlyArray<HouseBulb>,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const scene = houseSceneSpec.withMessage(h)
+  return scene([
+    scene.Bulbs(bulbs),
+    scene.Selection(model.houseSelection),
+    scene.OnPickedBulb(({ name }) => Message.PickedHouseBulb({ name })),
+    scene.OnPickedRoom(({ roomId }) => Message.PickedHouseRoom({ roomId })),
+    scene.OnClearedPick(() => Message.ClearedHousePick()),
+    scene.OnFailedScene(({ reason }) => Message.FailedHouseScene({ reason })),
+    h.Role('img'),
+    h.AriaLabel('3D view of the house'),
+    h.Class(HOUSE_STAGE),
+  ])
+}
+
+const houseFailureView = (reason: string, h: HtmlBuilder<Message>): Html =>
+  Alert<Message>(
+    { variant: 'destructive' },
+    [
+      Alert.description<Message>(
+        {},
+        [
+          `The 3D view couldn't start on this device: ${reason}. The room buttons below still work.`,
+        ],
+        h,
+      ),
+    ],
+    h,
+  )
+
+const houseRoomChipsView = (
+  model: Model,
+  bulbs: ReadonlyArray<HouseBulb>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('no-scrollbar flex gap-2 overflow-x-auto')],
+    Array.map(
+      Array.filter(ROOMS, room =>
+        Array.some(bulbs, bulb => bulb.roomId === room.id),
+      ),
+      room => {
+        const isSelected =
+          model.houseSelection._tag === 'Room' &&
+          model.houseSelection.roomId === room.id
+        return h.keyed('div')(
+          room.id,
+          [],
+          [
+            button<Message>(
+              {
+                variant: isSelected ? 'default' : 'secondary',
+                onClick: Message.PickedHouseRoom({ roomId: room.id }),
+                className: 'h-9 rounded-full px-3.5',
+                attributes: [h.AriaPressed(String(isSelected))],
+              },
+              room.label,
+              h,
+            ),
+          ],
+        )
+      },
+    ),
+  )
+
+const houseHintView = (hint: string, h: HtmlBuilder<Message>): Html =>
+  h.p([h.Class(`px-1 ${CAPTION}`)], [hint])
+
+const houseSelectionView = (
+  model: Model,
+  bulbs: ReadonlyArray<HouseBulb>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  HouseSelection.match(model.houseSelection, {
+    Nothing: () => houseHintView('Tap a light or a room to control it.', h),
+    Bulb: ({ name }) =>
+      Option.match(
+        Array.findFirst(model.lights, light => light.name === name),
+        {
+          onNone: () => houseHintView('That light is no longer paired.', h),
+          onSome: light => lightsCardView(model, [light], h),
+        },
+      ),
+    Room: ({ roomId }) =>
+      Option.match(roomById(roomId), {
+        onNone: () => h.empty,
+        onSome: room => houseRoomPanelView(model, room, bulbs, h),
+      }),
+  })
+
+const houseRoomPanelView = (
+  model: Model,
+  room: HouseRoom,
+  bulbs: ReadonlyArray<HouseBulb>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Option.match(groupOfRoom(room, model.groups), {
+    onNone: () => {
+      const roomLights = Array.filter(model.lights, light =>
+        Array.some(
+          bulbs,
+          bulb => bulb.roomId === room.id && bulb.name === light.name,
+        ),
+      )
+      return Array.isReadonlyArrayEmpty(roomLights)
+        ? houseHintView(`No lights in the ${room.label} yet.`, h)
+        : lightsCardView(model, roomLights, h)
+    },
+    onSome: group => {
+      const node: GroupNode = {
+        group,
+        childGroups: [],
+        lights: lightsOfTarget(model, Target.Group({ name: group.name })),
+      }
+      return groupCardView(model, node, [groupChildrenView(model, node, h)], h)
+    },
+  })
 
 const connectionLabel = (model: Model): string =>
   Startup.match(model.startup, {

@@ -15,6 +15,7 @@ import {
   SavablePresetLook,
   Setting,
 } from './domain'
+import { HouseSelection } from './house'
 import {
   Activity,
   Connection,
@@ -86,6 +87,8 @@ const base: Model = {
   maybeActiveSlider: Option.none(),
   pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
+  houseSelection: HouseSelection.Nothing(),
+  maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
 }
 

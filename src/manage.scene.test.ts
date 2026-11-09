@@ -18,6 +18,7 @@ import { Tabs } from '@foldkit/ui'
 
 import * as Automations from './automations'
 import { IncomingFrame, Pairing } from './domain'
+import { HouseSelection } from './house'
 import {
   Connection,
   Message,
@@ -64,6 +65,8 @@ const base: Model = {
   openGroups: [],
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
+  houseSelection: HouseSelection.Nothing(),
+  maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
   pageScroll: PageScroll.Still(),
 }

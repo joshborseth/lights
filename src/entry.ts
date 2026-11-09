@@ -1,5 +1,6 @@
 import { Runtime } from 'foldkit'
 
+import { registerHouseSceneElement } from './houseElement'
 import {
   Message,
   Model,
@@ -10,6 +11,8 @@ import {
 } from './main'
 import { startServiceWorker } from './pwa'
 import { view } from './view'
+
+registerHouseSceneElement()
 
 const application = Runtime.makeApplication({
   Model,

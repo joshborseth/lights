@@ -41,7 +41,13 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 
 The app installs to a phone's home screen as a PWA. `pwa/service-worker.js` caches only the app's own built files, so the app opens without the tailnet and then reports that it cannot connect. It never touches `/api` or `/automations`, and it never queues a command. The build generates `sw.js` from it. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
 
-The app has three tabs, Lights, Manage, and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
+The app has four tabs, Lights, House, Manage, and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
+
+The House tab shows the bulbs in a 3D cutaway of the home. Tapping a bulb or room opens the same controls as the Lights tab, so every command follows the rules below.
+
+- The floor plan in `src/house.ts` is a placeholder until the real home is modeled. A room lights up by matching a Zigbee2MQTT group to its label, ignoring case. A bulb with no matching room appears in the Hallway. Bulbs are spread evenly across their room, because real positions are not recorded yet.
+- `src/houseElement.ts` is a custom element that takes the bulbs and selection as properties and reports taps as events. `src/houseScene.ts` holds the three.js renderer and loads only when the tab opens.
+- Each room has its own shader that adds up only that room's bulbs, so light stops at the walls without shadow maps. The scene shows reported state only, and draws a frame only when something moves or fades.
 
 The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
 

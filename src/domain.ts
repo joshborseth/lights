@@ -14,6 +14,7 @@ import { modifyFields } from 'foldkit/struct'
 export const MIN_BRIGHTNESS = 1
 export const MAX_BRIGHTNESS = 254
 export const DEFAULT_COLOR_TEMP = 370
+export const WARM_WHITE = '#ffdfae'
 
 // LIGHTS
 

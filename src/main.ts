@@ -54,6 +54,7 @@ import {
   savePresetFrame,
   settingFrame,
 } from './domain'
+import { HouseSelection, RoomId } from './house'
 import * as Manage from './manage'
 
 const CONNECTION_TIMEOUT_MS = 5000
@@ -170,7 +171,12 @@ export const PresetEditor = defineTaggedUnion({
 })
 export type PresetEditor = typeof PresetEditor.Type
 
-export const AppTab = Schema.Literals(['Lights', 'Manage', 'Automations'])
+export const AppTab = Schema.Literals([
+  'Lights',
+  'House',
+  'Manage',
+  'Automations',
+])
 export type AppTab = typeof AppTab.Type
 
 export const AppTabs = Tabs.create<AppTab>()
@@ -198,6 +204,8 @@ export const Model = Schema.Struct({
   maybeActiveSlider: Schema.Option(ActiveSlider),
   pageScroll: PageScroll,
   presetEditor: PresetEditor,
+  houseSelection: HouseSelection,
+  maybeHouseFailure: Schema.Option(Schema.String),
   maybeProblem: Schema.Option(Schema.String),
 })
 export type Model = typeof Model.Type
@@ -234,6 +242,10 @@ export const Message = defineMessageUnion({
   ClickedCancelEditor: {},
   SubmittedEditor: {},
   ClickedDeletePreset: {},
+  PickedHouseBulb: { name: Schema.String },
+  PickedHouseRoom: { roomId: RoomId },
+  ClearedHousePick: {},
+  FailedHouseScene: { reason: Schema.String },
   SucceededSendFrame: {},
   FailedSendFrame: { error: Schema.String },
 })
@@ -1367,6 +1379,30 @@ export const update = (model: Model, message: Message) =>
           }),
       }),
 
+    PickedHouseBulb: ({ name }) => ({
+      model: modifyFields(model, {
+        houseSelection: () => HouseSelection.Bulb({ name }),
+      }),
+    }),
+
+    PickedHouseRoom: ({ roomId }) => ({
+      model: modifyFields(model, {
+        houseSelection: () => HouseSelection.Room({ roomId }),
+      }),
+    }),
+
+    ClearedHousePick: () => ({
+      model: modifyFields(model, {
+        houseSelection: () => HouseSelection.Nothing(),
+      }),
+    }),
+
+    FailedHouseScene: ({ reason }) => ({
+      model: modifyFields(model, {
+        maybeHouseFailure: () => Option.some(reason),
+      }),
+    }),
+
     SucceededSendFrame: () => ({ model }),
 
     FailedSendFrame: ({ error }) => {
@@ -1405,6 +1441,8 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     maybeActiveSlider: Option.none(),
     pageScroll: PageScroll.Still(),
     presetEditor: PresetEditor.Closed(),
+    houseSelection: HouseSelection.Nothing(),
+    maybeHouseFailure: Option.none(),
     maybeProblem: Option.none(),
   },
   commands: Command.mapMessages([Manage.PickClientTag()], message =>

@@ -17,6 +17,7 @@ import { Tabs } from '@foldkit/ui'
 import { DEFAULT_CONFIG, type Snapshot, WatcherMode } from './automation'
 import * as Automations from './automations'
 import { Pairing } from './domain'
+import { HouseSelection } from './house'
 import {
   Connection,
   type Model,
@@ -99,6 +100,8 @@ const base: Model = {
   maybeActiveSlider: Option.none(),
   pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
+  houseSelection: HouseSelection.Nothing(),
+  maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
 }
 

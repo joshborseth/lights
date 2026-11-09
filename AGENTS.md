@@ -22,6 +22,8 @@ Do not send commands to the real lights during development unless Josh has asked
 
 `repos/foldkit` landed through a squash merge, so `git subtree pull` cannot find it. To upgrade it, remove the folder, commit, and run `git subtree add` again at the new release tag.
 
+The House tab's floor plan in `src/house.ts` is a placeholder until Josh shows what the home really looks like. See the House tab notes in the migration plan.
+
 UI components come from foldcn and live in `src/components/ui/`, with `src/lib/icons.ts` and `src/lib/utils.ts`. They are copied source: Oxlint and Oxfmt skip them, and `tsc` checks them. Before adding one, read the guidance below.
 
 - `npx shadcn@latest add @foldcn/foldcn` downgrades `foldkit`, `@foldkit/ui`, `effect`, and `@effect/platform-browser`. Do not rerun it without restoring those versions afterward.

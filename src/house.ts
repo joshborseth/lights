@@ -1,13 +1,4 @@
-import {
-  Array,
-  Number,
-  Option,
-  Order,
-  Record,
-  Schema,
-  String,
-  pipe,
-} from 'effect'
+import { Array, Option, Order, Record, Schema, String, pipe } from 'effect'
 import { defineTaggedUnion } from 'foldkit/schema'
 
 import {
@@ -17,6 +8,7 @@ import {
   MAX_BRIGHTNESS,
   WARM_WHITE,
   hueSaturationToHex,
+  miredsToHex,
 } from './domain'
 import {
   type Door,
@@ -44,12 +36,13 @@ export const HouseBulb = Schema.Struct({
 })
 export type HouseBulb = typeof HouseBulb.Type
 
-export const HouseSelection = defineTaggedUnion({
-  Nothing: {},
-  Bulb: { name: Schema.String },
+export const HouseFocus = defineTaggedUnion({
+  Overview: {},
+  Scenes: {},
   Room: { roomId: RoomId },
+  Bulb: { name: Schema.String },
 })
-export type HouseSelection = typeof HouseSelection.Type
+export type HouseFocus = typeof HouseFocus.Type
 
 export type WallSpan = Readonly<{ from: number; to: number }>
 
@@ -139,12 +132,6 @@ const roomIdOfLight = (light: Light, groups: ReadonlyArray<Group>): RoomId =>
     }),
   )
 
-export const sharesLight = (first: RoomId, second: RoomId): boolean =>
-  Option.exists(
-    Option.all([roomById(first), roomById(second)]),
-    ([firstRoom, secondRoom]) => firstRoom.lightSpace === secondRoom.lightSpace,
-  )
-
 const lookOf = (
   maybeState: Option.Option<LightState>,
 ): Readonly<{ hex: string; level: number }> =>
@@ -155,7 +142,11 @@ const lookOf = (
       onNone: () => ({ hex: WARM_WHITE, level: 0 }),
       onSome: state => ({
         hex: Option.match(state.maybeHueSaturation, {
-          onNone: () => WARM_WHITE,
+          onNone: () =>
+            Option.match(state.maybeColorTemp, {
+              onNone: () => WARM_WHITE,
+              onSome: miredsToHex,
+            }),
           onSome: hueSaturationToHex,
         }),
         level: Math.max(MIN_LIT_LEVEL, state.brightness / MAX_BRIGHTNESS),
@@ -206,26 +197,6 @@ export const placedBulbs = (
       ...lookOf(Record.get(states, light.name)),
     }))
   })
-
-export const roomAt = (x: number, z: number): Option.Option<RoomId> =>
-  pipe(
-    ROOMS,
-    Array.findFirst(room =>
-      Array.some(
-        roomAreas(room),
-        area =>
-          Number.between(x, {
-            minimum: area.x,
-            maximum: area.x + area.width,
-          }) &&
-          Number.between(z, {
-            minimum: area.z,
-            maximum: area.z + area.depth,
-          }),
-      ),
-    ),
-    Option.map(room => room.id),
-  )
 
 export type ScreenPoint = Readonly<{ name: string; x: number; y: number }>
 

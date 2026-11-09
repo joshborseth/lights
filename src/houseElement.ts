@@ -1,7 +1,7 @@
 import { Option, Schema } from 'effect'
 import { CustomElement } from 'foldkit'
 
-import { HouseBulb, HouseSelection } from './house'
+import { HouseBulb, HouseFocus } from './house'
 import { RoomId } from './housePlan'
 import { type HouseScene } from './houseScene'
 
@@ -11,7 +11,7 @@ export const houseSceneSpec = CustomElement.define({
   tag: TAG,
   properties: {
     bulbs: Schema.Array(HouseBulb),
-    selection: HouseSelection,
+    houseFocus: HouseFocus,
   },
   events: {
     'picked-bulb': Schema.Struct({ name: Schema.String }),
@@ -22,16 +22,16 @@ export const houseSceneSpec = CustomElement.define({
 })
 
 const STAGE_STYLE =
-  'position:relative;display:block;width:100%;height:100%;overflow:hidden'
-const LOADING_STYLE =
-  'position:absolute;inset:0;display:grid;place-items:center;margin:0;font-size:0.75rem;color:var(--muted-foreground)'
+  'position:absolute;inset:0;display:block;width:100%;height:100%;overflow:hidden'
 
 // NOTE: The renderer needs a live element and owns its own frame loop, so it
-// lives behind this element. three.js loads on first use, which keeps it out
-// of the main bundle for anyone who stays on the other tabs.
+// lives behind this element. three.js loads as its own chunk, so the first
+// paint of the page does not wait for it. Children stay in the light DOM, where
+// the view can render and style them, and the renderer only moves the ones
+// marked with data-anchor to the screen position of a spot in the house.
 class HouseSceneElement extends HTMLElement {
   #bulbs: ReadonlyArray<HouseBulb> = []
-  #selection: HouseSelection = HouseSelection.Nothing()
+  #houseFocus: HouseFocus = HouseFocus.Overview()
   #maybeScene: Option.Option<HouseScene> = Option.none()
   #mountCount = 0
 
@@ -46,14 +46,14 @@ class HouseSceneElement extends HTMLElement {
     }
   }
 
-  get selection(): HouseSelection {
-    return this.#selection
+  get houseFocus(): HouseFocus {
+    return this.#houseFocus
   }
 
-  set selection(selection: HouseSelection) {
-    this.#selection = selection
+  set houseFocus(houseFocus: HouseFocus) {
+    this.#houseFocus = houseFocus
     if (Option.isSome(this.#maybeScene)) {
-      this.#maybeScene.value.setSelection(selection)
+      this.#maybeScene.value.setFocus(houseFocus)
     }
   }
 
@@ -63,19 +63,15 @@ class HouseSceneElement extends HTMLElement {
 
     const stage = document.createElement('div')
     stage.setAttribute('style', STAGE_STYLE)
-    const loading = document.createElement('p')
-    loading.setAttribute('style', LOADING_STYLE)
-    loading.textContent = 'Loading the house…'
-    stage.append(loading)
     const root = this.shadowRoot ?? this.attachShadow({ mode: 'open' })
-    root.replaceChildren(stage)
+    root.replaceChildren(stage, document.createElement('slot'))
 
     import('./houseScene')
       .then(({ createHouseScene }) => {
         if (mount !== this.#mountCount) {
           return
         }
-        const scene = createHouseScene(stage, {
+        const scene = createHouseScene(stage, this, {
           onPickBulb: name => {
             this.#emit('picked-bulb', { name })
           },
@@ -87,9 +83,8 @@ class HouseSceneElement extends HTMLElement {
           },
         })
         scene.setBulbs(this.#bulbs)
-        scene.setSelection(this.#selection)
+        scene.setFocus(this.#houseFocus)
         this.#maybeScene = Option.some(scene)
-        loading.remove()
       })
       .catch((error: unknown) => {
         if (mount === this.#mountCount) {

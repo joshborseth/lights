@@ -113,19 +113,19 @@
 }
 
 .dark {
-  --background: oklch(0.155 0.005 70);
+  --background: oklch(0.15 0.014 268);
   --foreground: oklch(0.96 0.005 80);
-  --card: oklch(0.2 0.006 70);
+  --card: oklch(0.2 0.016 268);
   --card-foreground: oklch(0.96 0.005 80);
-  --popover: oklch(0.2 0.006 70);
+  --popover: oklch(0.2 0.016 268);
   --popover-foreground: oklch(0.96 0.005 80);
   --primary: oklch(0.86 0.13 85);
   --primary-foreground: oklch(0.2 0.02 70);
-  --secondary: oklch(0.27 0.007 70);
+  --secondary: oklch(0.27 0.018 268);
   --secondary-foreground: oklch(0.96 0.005 80);
-  --muted: oklch(0.27 0.007 70);
-  --muted-foreground: oklch(0.72 0.01 75);
-  --accent: oklch(0.27 0.007 70);
+  --muted: oklch(0.27 0.018 268);
+  --muted-foreground: oklch(0.72 0.018 268);
+  --accent: oklch(0.27 0.018 268);
   --accent-foreground: oklch(0.96 0.005 80);
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.96 0.005 80);
@@ -167,6 +167,11 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
   }
   html {
     @apply font-sans;
@@ -250,4 +255,13 @@
   box-shadow:
     var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000),
     var(--tw-shadow);
+}
+
+@utility house-stage {
+  background: radial-gradient(
+    90% 55% at 50% 46%,
+    oklch(0.3 0.045 268),
+    oklch(0.18 0.03 268) 58%,
+    oklch(0.11 0.015 268)
+  );
 }

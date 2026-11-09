@@ -145,7 +145,7 @@ describe('commands to the bulbs', () => {
   test.each<[string, SettingType]>([
     ['brightness', Setting.Brightness({ value: 40 })],
     ['color temperature', Setting.ColorTemp({ value: 300 })],
-    ['color', Setting.Color({ hex: '#123456' })],
+    ['color', Setting.Color({ hue: 210 })],
   ])('%s never carries a transition', (_label, setting) => {
     expect(payloadOf(settingFrame('Orb', setting))).not.toHaveProperty(
       'transition',

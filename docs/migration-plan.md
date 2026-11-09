@@ -16,7 +16,7 @@ Replace Windfront, the Zigbee2MQTT web UI, with a small Foldkit app as the every
 
 Zigbee2MQTT and Mosquitto have to stay, because something must drive the radio. Only the UI layer changes, so the swap carries little risk: the new app is one more client.
 
-Windfront cannot be uninstalled. Zigbee2MQTT's WebSocket API comes from its frontend extension, so `frontend.enabled` stays `true`. The swap means nobody needs to open Windfront: the Manage tab pairs new bulbs and edits groups.
+Windfront cannot be uninstalled. Zigbee2MQTT's WebSocket API comes from its frontend extension, so `frontend.enabled` stays `true`. The swap means nobody needs to open Windfront: the Devices page pairs new bulbs and edits groups.
 
 ## Architecture
 
@@ -41,18 +41,25 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 
 The app can be added to a phone's home screen. `pwa/service-worker.js` is inactive, because browsers allow service workers only over HTTPS and the app is served over plain HTTP. If the app moves back to HTTPS, it caches only the app's own built files, never touches `/api` or `/automations`, and never queues a command. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
 
-The app has four tabs, Lights, House, Manage, and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
+The main screen is the house: a full-screen 3D cutaway of the home that the user controls directly. Automations and Devices are buttons that open full-screen pages over it, and Scenes has its own editing page. `screen` and `focus` in the Model hold where the user is, so the app needs no client-side routes and no server fallback for deep links.
 
-The House tab shows the bulbs in a 3D cutaway of the home. Tapping a bulb or room opens the same controls as the Lights tab, so every command follows the rules below.
+The house has three levels of focus, and each one shows only what it can act on:
+
+- **Overview.** Each room with lights floats a control pinned to that spot in the 3D view: tap its orb to toggle the room, tap its name or the room itself to go in. A dock offers All off and whole-house Scenes.
+- **Room.** The camera flies in, rooms between it and the camera are cut away, and the rest dim. A sheet (a side panel on wide screens) holds power, brightness, temperature, color, and that room's scenes. Each bulb appears as a button at its real fixture.
+- **Bulb.** The same sheet, for one bulb.
+
+Rooms use their Zigbee2MQTT group when it has bulbs in it. A room without one, such as a Kitchen group left empty, sends the same command to each of its bulbs, so every command still follows the rules below.
 
 - The floor plan in `src/housePlan.ts` is estimated from photos of the living room, kitchen, stairs, bedroom, and bathroom, so sizes are approximate. There is no hallway: the bedroom door opens straight off the great room, and the closet is deliberately left out, with its floor counted as bedroom, so the bedroom is one rectangle that reaches the bathroom. The bathroom door is on the kitchen wall, and its position along that wall is inferred. The bathroom keeps its modeled outline, so its walkway and tub are drawn shorter than they really are. Each room lists its furniture and the fixtures that hold bulbs.
 - A bulb goes in the room whose non-empty group contains it, then the room its name starts with, and otherwise the Stairs. Within a room, bulbs take the fixtures in name order, and any extras stand on their own.
-- `src/houseElement.ts` is a custom element that takes the bulbs and selection as properties and reports taps as events. `src/houseScene.ts` holds the three.js renderer and loads only when the tab opens.
-- Each room has its own shader that adds up only the bulbs in its light space, so light stops at closed walls without shadow maps and carries across the open kitchen, living room, and foot of the stairs. The scene shows reported state only, and draws a frame only when something moves or fades.
+- `src/houseElement.ts` is a custom element that takes the bulbs and focus as properties and reports taps as events. `src/houseScene.ts` holds the three.js renderer and loads as its own chunk, so the first paint does not wait for it. The floating controls are ordinary view elements inside it, marked with `data-anchor`, and the renderer only sets their screen position.
+- Each bulb has a shadow map baked once from the static house, so walls block light, light spills through doorways, and furniture casts shadows. A separate fill term reaches only surfaces in the bulb's own light space. Shadows use fewer samples while the camera moves, and frames are drawn only when something moves or fades.
+- The scene shows reported state, except that a drag previews in the house as well as on the slider until the bulb reports back.
 
-The Automations tab has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
+The Automations page has three screens, also kept in the Model: a list with one row per automation, a detail page, and Connections for what automations share (GitHub, lights, the service). Unsaved edits stay in one save bar across screens.
 
-The Manage tab pairs bulbs, renames and removes them, moves them between groups, and creates, renames, and removes groups. It uses Zigbee2MQTT's `bridge/request/*` API over the same socket, so it needs no backend.
+The Devices page pairs bulbs, renames and removes them, moves them between groups, and creates, renames, and removes groups. It uses Zigbee2MQTT's `bridge/request/*` API over the same socket, so it needs no backend.
 
 - Each change is a plan of requests, sent one at a time. The next one goes out only when `bridge/response/*` reports the previous one succeeded. Requests carry a `transaction` tagged per app instance, so a second open app can't confirm them.
 - A device whose friendly name is still its address is waiting for setup. That comes from `bridge/devices`, so it survives a reload. The pairing window comes from the retained `bridge/info`.
@@ -61,7 +68,7 @@ The Manage tab pairs bulbs, renames and removes them, moves them between groups,
 
 ### Automations service
 
-The Lights tab still needs no backend. The Automations tab does, because Zigbee2MQTT's socket only relays what Zigbee2MQTT itself publishes, and something must keep watching GitHub when no browser is open.
+The house and its controls need no backend. The Automations page does, because Zigbee2MQTT's socket only relays what Zigbee2MQTT itself publishes, and something must keep watching GitHub when no browser is open.
 
 ```
 Browser  --- /automations ---> lights-lan
@@ -71,7 +78,7 @@ Browser  --- /automations ---> lights-lan
                      GitHub API        MQTT broker  ->  bulbs
 ```
 
-`service/` is one always-on user service, `lights-automations`. The watcher and its API live in the same process, so the app controls the watcher without needing permission to manage systemd. If the process dies, systemd restarts it and the tab shows "Not responding" until it returns.
+`service/` is one always-on user service, `lights-automations`. The watcher and its API live in the same process, so the app controls the watcher without needing permission to manage systemd. If the process dies, systemd restarts it and the page shows "Not responding" until it returns.
 
 - `src/automation.ts` holds the settings and status types and the validation shared by the service and the app. The service validates every save with it.
 - Settings: `~/.config/pr-merge-lights/config.json`. MQTT login: `mqtt.env` in the same folder. It is never sent to the browser.
@@ -119,7 +126,7 @@ Then use it from the phone for about a week.
 
 - Change the Zigbee2MQTT port mapping in `/srv/homeassistant/compose.yaml` to `127.0.0.1:8080:8080`, and recreate that container. Expect a short Zigbee outage.
 - Update the Zigbee2MQTT section of that folder's README.
-- Open Windfront through a tailnet-only proxy only for what the Manage tab doesn't cover, such as firmware updates.
+- Open Windfront through a tailnet-only proxy only for what the Devices page doesn't cover, such as firmware updates.
 
 **Rollback:** restore the port line. Nothing else changes, because the app holds no state of its own.
 
@@ -129,3 +136,4 @@ Then use it from the phone for about a week.
 - Presets can be edited in the app.
 - Home Assistant stays for the TV and music.
 - Automations run in a small service on loopback, reached through `lights-lan`, because they must keep running with no browser open.
+- The everyday control surface is the 3D house, not a list of switches.

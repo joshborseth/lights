@@ -3,7 +3,6 @@ import { Command, given, message, model, story } from 'foldkit/story'
 import { describe, expect, test } from 'vitest'
 
 import * as Slider from '@/components/ui/slider'
-import { Tabs } from '@foldkit/ui'
 
 import * as Automations from './automations'
 import {
@@ -15,7 +14,7 @@ import {
   SavablePresetLook,
   Setting,
 } from './domain'
-import { HouseSelection } from './house'
+import { HouseFocus } from './house'
 import {
   Activity,
   Connection,
@@ -34,6 +33,7 @@ import {
   WaitForThrottle,
   WaitToReconnect,
   sliderDomId,
+  statesWithDrafts,
   targetStatus,
   update,
 } from './main'
@@ -52,8 +52,8 @@ const presets: ReadonlyArray<Preset> = [
 ]
 
 const base: Model = {
-  tab: 'Lights',
-  tabs: Tabs.init({ id: 'app-tabs' }),
+  screen: 'House',
+  focus: HouseFocus.Overview(),
   automations: Automations.init,
   manage: Manage.init,
   connection: Connection.Connected(),
@@ -82,12 +82,9 @@ const base: Model = {
   drafts: [],
   activities: [],
   nextRequestId: 1,
-  maybeExpanded: Option.none(),
-  openGroups: [],
   maybeActiveSlider: Option.none(),
   pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
-  houseSelection: HouseSelection.Nothing(),
   maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
 }
@@ -1383,5 +1380,106 @@ describe('presets', () => {
         expect(next.presetEditor._tag).toBe('Closed')
       }),
     )
+  })
+})
+
+describe('moving around the house', () => {
+  const inRoom = (roomId: 'Bedroom' | 'Kitchen'): Model => ({
+    ...base,
+    focus: HouseFocus.Room({ roomId }),
+  })
+
+  test('Escape from a bulb goes back to its room, then the house', () => {
+    story(
+      update,
+      given({ ...base, focus: HouseFocus.Bulb({ name: 'Orb' }) }),
+      message(Message.PressedEscape()),
+      model(({ focus }) => {
+        expect(focus).toEqual(HouseFocus.Room({ roomId: 'Stairs' }))
+      }),
+      message(Message.PressedEscape()),
+      model(({ focus }) => {
+        expect(focus).toEqual(HouseFocus.Overview())
+      }),
+    )
+  })
+
+  test('Escape closes a page first and leaves the room in focus', () => {
+    story(
+      update,
+      given({ ...inRoom('Bedroom'), screen: 'Automations' }),
+      message(Message.PressedEscape()),
+      model(({ focus, screen }) => {
+        expect(screen).toBe('House')
+        expect(focus).toEqual(HouseFocus.Room({ roomId: 'Bedroom' }))
+      }),
+    )
+  })
+
+  test('the scenes button opens and closes the scenes sheet', () => {
+    story(
+      update,
+      given(base),
+      message(Message.ClickedScenes()),
+      model(({ focus }) => {
+        expect(focus).toEqual(HouseFocus.Scenes())
+      }),
+      message(Message.ClickedScenes()),
+      model(({ focus }) => {
+        expect(focus).toEqual(HouseFocus.Overview())
+      }),
+    )
+  })
+
+  test('a room with no lights cannot be focused', () => {
+    story(
+      update,
+      given(base),
+      message(Message.PickedHouseRoom({ roomId: 'Kitchen' })),
+      model(({ focus }) => {
+        expect(focus).toEqual(HouseFocus.Overview())
+      }),
+    )
+  })
+})
+
+describe('previewing a drag in the house', () => {
+  const target = Target.Light({ name: 'Orb' })
+  const dragged = (setting: Setting): Model => ({
+    ...base,
+    drafts: [
+      {
+        target,
+        setting,
+        phase: DraftPhase.Throttling({ isDirty: false }),
+        awaitingReports: ['Orb'],
+      },
+    ],
+  })
+
+  test('a brightness drag shows before the bulb reports it', () => {
+    expect(
+      statesWithDrafts(dragged(Setting.Brightness({ value: 30 })))['Orb']
+        ?.brightness,
+    ).toBe(30)
+  })
+
+  test('a color drag shows full-saturation color', () => {
+    expect(
+      statesWithDrafts(dragged(Setting.Color({ hue: 200 })))['Orb']
+        ?.maybeHueSaturation,
+    ).toEqual(Option.some({ hue: 200, saturation: 100 }))
+  })
+
+  test('a temperature drag replaces any reported color', () => {
+    const preview = statesWithDrafts(
+      dragged(Setting.ColorTemp({ value: 300 })),
+    )['Orb']
+    expect(preview?.maybeColorTemp).toEqual(Option.some(300))
+    expect(preview?.maybeHueSaturation).toEqual(Option.none())
+  })
+
+  test('with no drag the reported state stands', () => {
+    expect(statesWithDrafts(base)).toEqual(base.states)
   })
 })

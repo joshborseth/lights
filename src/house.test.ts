@@ -2,14 +2,7 @@ import { Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 
 import { type Group, type Light, type LightState } from './domain'
-import {
-  nearestBulbName,
-  placedBulbs,
-  roomAreas,
-  roomAt,
-  sharesLight,
-  wallSpans,
-} from './house'
+import { nearestBulbName, placedBulbs, roomAreas, wallSpans } from './house'
 import {
   HOUSE_DEPTH,
   HOUSE_WIDTH,
@@ -270,7 +263,7 @@ describe('the floor plan', () => {
   test('keeps every fixture inside its room and below the ceiling', () => {
     ROOMS.forEach(({ id, lightSpots }) => {
       lightSpots.forEach(({ x, y, z }) => {
-        expect(roomAt(x, z)).toEqual(Option.some(id))
+        expect(roomContaining(x, z)?.id).toBe(id)
         expect(y).toBeLessThan(WALL_HEIGHT)
       })
     })
@@ -298,35 +291,6 @@ describe('the floor plan', () => {
       named('Kitchen Light More Wobbly Chair Side')?.x ?? 0,
     )
     expect(bulbs.every(({ isMounted }) => isMounted)).toBe(true)
-  })
-})
-
-describe('sharesLight', () => {
-  test('rooms in the open great room light each other', () => {
-    expect(sharesLight('Kitchen', 'LivingRoom')).toBe(true)
-    expect(sharesLight('Stairs', 'Kitchen')).toBe(true)
-  })
-
-  test('light stays inside a closed room', () => {
-    expect(sharesLight('Bedroom', 'Kitchen')).toBe(false)
-    expect(sharesLight('Kitchen', 'Bathroom')).toBe(false)
-  })
-})
-
-describe('roomAt', () => {
-  test('finds the room under a floor point', () => {
-    expect(roomAt(5, 1)).toEqual(Option.some('LivingRoom'))
-    expect(roomAt(1, 1)).toEqual(Option.some('Bedroom'))
-    expect(roomAt(1, 6)).toEqual(Option.some('Bathroom'))
-    expect(roomAt(1, 4)).toEqual(Option.some('Bedroom'))
-    expect(roomAt(3, 4)).toEqual(Option.some('Bedroom'))
-    expect(roomAt(6, 7.5)).toEqual(Option.some('Stairs'))
-  })
-
-  test('finds nothing outside the house', () => {
-    expect(roomAt(-1, 1)).toEqual(Option.none())
-    expect(roomAt(1, 7.5)).toEqual(Option.none())
-    expect(roomAt(6, 20)).toEqual(Option.none())
   })
 })
 

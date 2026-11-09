@@ -25,7 +25,6 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 
 import * as Slider from '@/components/ui/slider'
-import { Tabs } from '@foldkit/ui'
 
 import * as Automations from './automations'
 import {
@@ -54,8 +53,8 @@ import {
   savePresetFrame,
   settingFrame,
 } from './domain'
-import { HouseSelection } from './house'
-import { RoomId } from './housePlan'
+import { HouseFocus, groupOfRoom, placedBulbs, roomById } from './house'
+import { type HouseRoom, RoomId } from './housePlan'
 import * as Manage from './manage'
 
 const CONNECTION_TIMEOUT_MS = 5000
@@ -78,6 +77,7 @@ const STARTUP_FRAMES_TIMEOUT_MS = 3000
 const STRUGGLING_CONNECTION_ATTEMPTS = 3
 const BRIGHTNESS_MATCH_TOLERANCE = 3
 export const PRESET_COLOR_TEMP_RANGE: ColorTempRange = { min: 153, max: 555 }
+const HUE_RANGE: ColorTempRange = { min: 0, max: 359 }
 
 // MODEL
 
@@ -94,6 +94,7 @@ export type Connection = typeof Connection.Type
 export const Target = defineTaggedUnion({
   Light: { name: Schema.String },
   Group: { name: Schema.String },
+  Room: { name: Schema.String, lightNames: Schema.Array(Schema.String) },
 })
 export type Target = typeof Target.Type
 
@@ -140,6 +141,7 @@ export type Startup = typeof Startup.Type
 export const SliderId = defineTaggedUnion({
   TargetBrightness: { target: Target },
   TargetColorTemp: { target: Target },
+  TargetHue: { target: Target },
   EditorBrightness: {},
   EditorColorTemp: {},
 })
@@ -172,19 +174,17 @@ export const PresetEditor = defineTaggedUnion({
 })
 export type PresetEditor = typeof PresetEditor.Type
 
-export const AppTab = Schema.Literals([
-  'Lights',
+export const Screen = Schema.Literals([
   'House',
-  'Manage',
+  'Scenes',
+  'Devices',
   'Automations',
 ])
-export type AppTab = typeof AppTab.Type
-
-export const AppTabs = Tabs.create<AppTab>()
+export type Screen = typeof Screen.Type
 
 export const Model = Schema.Struct({
-  tab: AppTab,
-  tabs: Tabs.Model,
+  screen: Screen,
+  focus: HouseFocus,
   automations: Automations.Model,
   manage: Manage.Model,
   connection: Connection,
@@ -200,12 +200,9 @@ export const Model = Schema.Struct({
   drafts: Schema.Array(Draft),
   activities: Schema.Array(TargetActivity),
   nextRequestId: Schema.Number,
-  maybeExpanded: Schema.Option(Target),
-  openGroups: Schema.Array(Schema.String),
   maybeActiveSlider: Schema.Option(ActiveSlider),
   pageScroll: PageScroll,
   presetEditor: PresetEditor,
-  houseSelection: HouseSelection,
   maybeHouseFailure: Schema.Option(Schema.String),
   maybeProblem: Schema.Option(Schema.String),
 })
@@ -214,7 +211,6 @@ export type Model = typeof Model.Type
 // MESSAGE
 
 export const Message = defineMessageUnion({
-  GotTabsMessage: { message: Tabs.Message },
   GotAutomationsMessage: { message: Automations.Message },
   GotManageMessage: { message: Manage.Message },
   AcquiredSocket: {},
@@ -225,8 +221,10 @@ export const Message = defineMessageUnion({
   ResumedApp: { hiddenForMs: Schema.Number },
   ReceivedFrame: { frame: IncomingFrame },
   ClickedPower: { target: Target },
-  ClickedExpand: { target: Target },
-  ClickedGroupBulbs: { group: Schema.String },
+  ClickedOpenScreen: { screen: Screen },
+  ClickedBackToHouse: {},
+  ClickedScenes: {},
+  PressedEscape: {},
   UpdatedSetting: { target: Target, setting: Setting },
   CompletedThrottleWait: { target: Target, kind: SettingKind },
   CompletedWaitForConfirmation: { requestId: Schema.Number },
@@ -260,6 +258,7 @@ export type TargetStatus = Readonly<{
   brightness: number
   maybeColorTemp: Option.Option<number>
   maybeHex: Option.Option<string>
+  maybeHue: Option.Option<number>
   maybeColorTempRange: Option.Option<ColorTempRange>
   supportsColor: boolean
 }>
@@ -288,6 +287,10 @@ const statusOf = (
     maybeHex: Option.map(
       Array.findFirst(shownStates, state => state.maybeHueSaturation),
       hueSaturationToHex,
+    ),
+    maybeHue: Option.map(
+      Array.findFirst(shownStates, state => state.maybeHueSaturation),
+      ({ hue }) => hue,
     ),
     maybeColorTempRange: Array.match(ranges, {
       onEmpty: () => Option.none(),
@@ -330,7 +333,98 @@ export const lightsOfTarget = (
           onSome: group => groupMembers(model, group),
         }),
       ),
+    Room: ({ lightNames }) =>
+      Array.filter(model.lights, light =>
+        Array.contains(lightNames, light.name),
+      ),
   })
+
+// NOTE: A command reaches a room through its Zigbee2MQTT group when it has one
+// with bulbs in it. Rooms without one, like a Kitchen group left empty, get the
+// same command sent to each bulb instead.
+const commandNames = (target: Target): ReadonlyArray<string> =>
+  Target.match(target, {
+    Light: ({ name }) => [name],
+    Group: ({ name }) => [name],
+    Room: ({ lightNames }) => lightNames,
+  })
+
+export const roomLights = (
+  model: Model,
+  room: HouseRoom,
+): ReadonlyArray<Light> => {
+  const roomNames = pipe(
+    placedBulbs(model.lights, model.groups, model.states),
+    Array.filter(bulb => bulb.roomId === room.id),
+    Array.map(bulb => bulb.name),
+  )
+  return Array.filter(model.lights, light =>
+    Array.contains(roomNames, light.name),
+  )
+}
+
+export const roomTarget = (
+  model: Model,
+  room: HouseRoom,
+): Option.Option<Target> => {
+  const lights = roomLights(model, room)
+  return Option.match(groupOfRoom(room, model.groups), {
+    onSome: group => Option.some(Target.Group({ name: group.name })),
+    onNone: () =>
+      Array.match(lights, {
+        onEmpty: () => Option.none(),
+        onNonEmpty: nonEmptyLights =>
+          nonEmptyLights.length === 1
+            ? Option.some(Target.Light({ name: nonEmptyLights[0].name }))
+            : Option.some(
+                Target.Room({
+                  name: room.label,
+                  lightNames: Array.map(nonEmptyLights, light => light.name),
+                }),
+              ),
+      }),
+  })
+}
+
+export const wholeHouseTarget = (model: Model): Option.Option<Target> =>
+  Array.isReadonlyArrayEmpty(model.lights)
+    ? Option.none()
+    : pipe(
+        model.groups,
+        Array.findFirst(group =>
+          Array.every(model.lights, light =>
+            Array.contains(group.memberAddresses, light.address),
+          ),
+        ),
+        Option.map(group => Target.Group({ name: group.name })),
+      )
+
+const previewedState = (state: LightState, setting: Setting): LightState =>
+  Setting.match(setting, {
+    Brightness: ({ value }) => modifyFields(state, { brightness: () => value }),
+    ColorTemp: ({ value }) =>
+      modifyFields(state, {
+        maybeColorTemp: () => Option.some(value),
+        maybeHueSaturation: () => Option.none(),
+      }),
+    Color: ({ hue }) =>
+      modifyFields(state, {
+        maybeHueSaturation: () => Option.some({ hue, saturation: 100 }),
+      }),
+  })
+
+// NOTE: The house answers a drag before the bulbs do, like the slider itself.
+// A draft ends when the bulb reports back, so the next report still wins.
+export const statesWithDrafts = (model: Model): Model['states'] =>
+  Array.reduce(model.drafts, model.states, (states, draft) =>
+    Array.reduce(lightsOfTarget(model, draft.target), states, (next, light) =>
+      Option.match(Record.get(next, light.name), {
+        onNone: () => next,
+        onSome: state =>
+          Record.set(next, light.name, previewedState(state, draft.setting)),
+      }),
+    ),
+  )
 
 export const targetStatus = (model: Model, target: Target): TargetStatus => {
   const lights = lightsOfTarget(model, target)
@@ -342,6 +436,7 @@ export const targetStatus = (model: Model, target: Target): TargetStatus => {
         onNone: () => status,
         onSome: level => modifyFields(status, { brightness: () => level }),
       }),
+    Room: () => status,
   })
 }
 
@@ -385,12 +480,6 @@ export const activityOf = (
     Array.findFirst(model.activities, isActivityFor(target)),
     entry => entry.activity,
   )
-
-export const isExpanded = (model: Model, target: Target): boolean =>
-  Option.exists(model.maybeExpanded, expanded => isSameTarget(expanded, target))
-
-export const isGroupOpen = (model: Model, group: string): boolean =>
-  Array.contains(model.openGroups, group)
 
 export const isMixed = (
   model: Model,
@@ -448,6 +537,7 @@ export const sliderDomId = (sliderId: SliderId): string =>
   SliderId.match(sliderId, {
     TargetBrightness: ({ target }) => `${targetId(target)}-brightness`,
     TargetColorTemp: ({ target }) => `${targetId(target)}-temperature`,
+    TargetHue: ({ target }) => `${targetId(target)}-hue`,
     EditorBrightness: () => 'preset-brightness',
     EditorColorTemp: () => 'preset-temperature',
   })
@@ -461,6 +551,7 @@ const sliderRange = (model: Model, sliderId: SliderId): ColorTempRange => {
         targetStatus(model, target).maybeColorTempRange,
         () => PRESET_COLOR_TEMP_RANGE,
       ),
+    TargetHue: () => HUE_RANGE,
     EditorBrightness: () => brightnessRange,
     EditorColorTemp: () => PRESET_COLOR_TEMP_RANGE,
   })
@@ -819,7 +910,9 @@ const startActivity = (
 })
 
 const settingCommands = (target: Target, setting: Setting) => [
-  SendFrame({ frame: settingFrame(target.name, setting) }),
+  ...Array.map(commandNames(target), name =>
+    SendFrame({ frame: settingFrame(name, setting) }),
+  ),
   WaitForThrottle({ target, kind: settingKindOf(setting) }),
 ]
 
@@ -860,23 +953,6 @@ const modifyEditing = (
 
 const closedEditor = (model: Model) =>
   modifyFields(model, { presetEditor: () => PresetEditor.Closed() })
-
-const foldTabsOutMessage = Tabs.OutMessage.match<
-  Update.Step<Model, Message, Z2mSocketService>,
-  Tabs.OutMessage<AppTab>
->({
-  Selected:
-    ({ value }) =>
-    model => ({ model: modifyFields(model, { tab: () => value }) }),
-})
-
-const foldTabs = Update.foldChild({
-  update: AppTabs.update,
-  read: (model: Model) => Option.some(model.tabs),
-  write: (model, nextTabs) => modifyFields(model, { tabs: () => nextTabs }),
-  toParentMessage: message => Message.GotTabsMessage({ message }),
-  foldOutMessage: foldTabsOutMessage,
-})
 
 const foldAutomations = Update.foldChild({
   update: Automations.update,
@@ -1046,6 +1122,8 @@ const appliedSliderValue = (
       updatedSetting(model, target, Setting.Brightness({ value })),
     TargetColorTemp: ({ target }) =>
       updatedSetting(model, target, Setting.ColorTemp({ value })),
+    TargetHue: ({ target }) =>
+      updatedSetting(model, target, Setting.Color({ hue: value })),
     EditorBrightness: () =>
       modifyEditing(model, editing =>
         modifyFields(editing, { brightness: () => value }),
@@ -1080,10 +1158,29 @@ const foldSliderMessage = (sliderId: SliderId) =>
       }),
   })
 
+const canFocusRoom = (model: Model, roomId: RoomId): boolean =>
+  Option.exists(roomById(roomId), room =>
+    Array.isReadonlyArrayNonEmpty(roomLights(model, room)),
+  )
+
+const outerFocus = (model: Model, focus: HouseFocus): HouseFocus =>
+  HouseFocus.match(focus, {
+    Overview: () => focus,
+    Scenes: () => HouseFocus.Overview(),
+    Room: () => HouseFocus.Overview(),
+    Bulb: ({ name }) =>
+      pipe(
+        placedBulbs(model.lights, model.groups, model.states),
+        Array.findFirst(bulb => bulb.name === name),
+        Option.match({
+          onNone: () => HouseFocus.Overview(),
+          onSome: bulb => HouseFocus.Room({ roomId: bulb.roomId }),
+        }),
+      ),
+  })
+
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
-    GotTabsMessage: ({ message }) => foldTabs(model, message),
-
     GotAutomationsMessage: ({ message }) => foldAutomations(model, message),
 
     GotManageMessage: ({ message }) => foldManage(model, message),
@@ -1166,24 +1263,34 @@ export const update = (model: Model, message: Message) =>
         target,
         Activity.SettingPower({ power }),
         POWER_CONFIRM_TIMEOUT_MS,
-        [SendFrameTwice({ frame: powerFrame(target.name, power) })],
+        Array.map(commandNames(target), name =>
+          SendFrameTwice({ frame: powerFrame(name, power) }),
+        ),
       )
     },
 
-    ClickedExpand: ({ target }) => ({
+    ClickedOpenScreen: ({ screen }) => ({
+      model: modifyFields(model, { screen: () => screen }),
+    }),
+
+    ClickedBackToHouse: () => ({
+      model: modifyFields(model, { screen: () => 'House' as const }),
+    }),
+
+    ClickedScenes: () => ({
       model: modifyFields(model, {
-        maybeExpanded: () =>
-          isExpanded(model, target) ? Option.none() : Option.some(target),
+        focus: focus =>
+          focus._tag === 'Scenes' ? HouseFocus.Overview() : HouseFocus.Scenes(),
       }),
     }),
 
-    ClickedGroupBulbs: ({ group }) => ({
-      model: modifyFields(model, {
-        openGroups: openGroups =>
-          Array.contains(openGroups, group)
-            ? Array.filter(openGroups, name => name !== group)
-            : Array.append(openGroups, group),
-      }),
+    PressedEscape: () => ({
+      model:
+        model.screen === 'House'
+          ? modifyFields(model, {
+              focus: () => outerFocus(model, model.focus),
+            })
+          : modifyFields(model, { screen: () => 'House' as const }),
     }),
 
     UpdatedSetting: ({ target, setting }) =>
@@ -1272,14 +1379,18 @@ export const update = (model: Model, message: Message) =>
         target,
         Activity.ApplyingPreset({ preset }),
         PRESET_APPLY_TIMEOUT_MS,
-        [
-          SendFrame({
-            frame: Target.match(target, {
-              Light: ({ name }) => applyLightPresetFrame(name, preset),
-              Group: ({ name }) => applyPresetFrame(name, preset),
-            }),
-          }),
-        ],
+        Target.match(target, {
+          Light: ({ name }) => [
+            SendFrame({ frame: applyLightPresetFrame(name, preset) }),
+          ],
+          Group: ({ name }) => [
+            SendFrame({ frame: applyPresetFrame(name, preset) }),
+          ],
+          Room: ({ lightNames }) =>
+            Array.map(lightNames, name =>
+              SendFrame({ frame: applyLightPresetFrame(name, preset) }),
+            ),
+        }),
       )
     },
 
@@ -1382,20 +1493,18 @@ export const update = (model: Model, message: Message) =>
 
     PickedHouseBulb: ({ name }) => ({
       model: modifyFields(model, {
-        houseSelection: () => HouseSelection.Bulb({ name }),
+        focus: () => HouseFocus.Bulb({ name }),
       }),
     }),
 
     PickedHouseRoom: ({ roomId }) => ({
-      model: modifyFields(model, {
-        houseSelection: () => HouseSelection.Room({ roomId }),
-      }),
+      model: canFocusRoom(model, roomId)
+        ? modifyFields(model, { focus: () => HouseFocus.Room({ roomId }) })
+        : model,
     }),
 
     ClearedHousePick: () => ({
-      model: modifyFields(model, {
-        houseSelection: () => HouseSelection.Nothing(),
-      }),
+      model: modifyFields(model, { focus: () => HouseFocus.Overview() }),
     }),
 
     FailedHouseScene: ({ reason }) => ({
@@ -1420,8 +1529,8 @@ export const update = (model: Model, message: Message) =>
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: {
-    tab: 'Lights',
-    tabs: Tabs.init({ id: 'app-tabs' }),
+    screen: 'House',
+    focus: HouseFocus.Overview(),
     automations: Automations.init,
     manage: Manage.init,
     connection: Connection.Connecting({ attempt: 0 }),
@@ -1437,12 +1546,9 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     drafts: [],
     activities: [],
     nextRequestId: 0,
-    maybeExpanded: Option.none(),
-    openGroups: [],
     maybeActiveSlider: Option.none(),
     pageScroll: PageScroll.Still(),
     presetEditor: PresetEditor.Closed(),
-    houseSelection: HouseSelection.Nothing(),
     maybeHouseFailure: Option.none(),
     maybeProblem: Option.none(),
   },
@@ -1639,10 +1745,12 @@ const streamResumes: Stream.Stream<typeof Message.ResumedApp.Type> =
     ),
   )
 
+// NOTE: Sheets and full-screen pages scroll inside their own containers, and
+// scroll events do not bubble, so only a capturing listener sees all of them.
 const streamPageScrollEvents: Stream.Stream<unknown> = Stream.fromEventListener(
   window,
   'scroll',
-  { passive: true },
+  { passive: true, capture: true },
 )
 
 export const streamPageScrollStart: Stream.Stream<Message> =
@@ -1661,6 +1769,12 @@ export const streamPageScrollSettle: Stream.Stream<Message> = Stream.concat(
   Stream.take(1),
   Stream.map(() => Message.SettledPageScroll()),
 )
+
+const streamEscapePresses: Stream.Stream<Message> =
+  Stream.fromEventListener<KeyboardEvent>(document, 'keydown').pipe(
+    Stream.filter(event => event.key === 'Escape'),
+    Stream.map(() => Message.PressedEscape()),
+  )
 
 const socketSubscriptions = Subscription.make<
   Model,
@@ -1684,6 +1798,20 @@ const socketSubscriptions = Subscription.make<
         isMoving ? streamPageScrollSettle : streamPageScrollStart,
     },
   ),
+  escape: entry(
+    { isAwayFromOverview: Schema.Boolean },
+    {
+      modelToDependencies: model => ({
+        isAwayFromOverview:
+          model.screen !== 'House' || model.focus._tag !== 'Overview',
+      }),
+      dependenciesToStream: ({ isAwayFromOverview }) =>
+        Stream.when(
+          streamEscapePresses,
+          Effect.sync(() => isAwayFromOverview),
+        ),
+    },
+  ),
   pairingClock: entry(
     { isOpen: Schema.Boolean },
     {
@@ -1702,7 +1830,9 @@ const socketSubscriptions = Subscription.make<
   automationsRefresh: entry(
     { isOpen: Schema.Boolean },
     {
-      modelToDependencies: model => ({ isOpen: model.tab === 'Automations' }),
+      modelToDependencies: model => ({
+        isOpen: model.screen === 'Automations',
+      }),
       dependenciesToStream: ({ isOpen }) =>
         Stream.when(
           Automations.refreshTicks(AUTOMATIONS_REFRESH_MS).pipe(

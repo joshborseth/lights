@@ -15,6 +15,7 @@ export const MIN_BRIGHTNESS = 1
 export const MAX_BRIGHTNESS = 254
 export const DEFAULT_COLOR_TEMP = 370
 export const WARM_WHITE = '#ffdfae'
+export const FULL_SATURATION = 100
 
 // LIGHTS
 
@@ -234,6 +235,8 @@ export const buildLightTree = (
   }
 }
 
+const MIN_SHORT_NAME_WORDS = 2
+
 const wordsOf = (name: string): ReadonlyArray<string> =>
   pipe(name, String.split(' '))
 
@@ -246,14 +249,30 @@ export const shortLightName = (
   const sharedWords = Array.takeWhile(words, (word, index) =>
     Array.every(siblingWords, candidate => candidate[index] === word),
   )
+  const sharedLastWords = Array.takeWhile(Array.reverse(words), (word, index) =>
+    Array.every(
+      siblingWords,
+      candidate => candidate[candidate.length - 1 - index] === word,
+    ),
+  )
   const canShorten =
     siblings.length > 1 &&
     Array.every(
       siblingWords,
       candidate => candidate.length > sharedWords.length,
     )
+  const distinctWords = Array.drop(words, sharedWords.length)
   return canShorten
-    ? Array.join(Array.drop(words, sharedWords.length), ' ')
+    ? Array.join(
+        Array.take(
+          distinctWords,
+          Math.max(
+            MIN_SHORT_NAME_WORDS,
+            distinctWords.length - sharedLastWords.length,
+          ),
+        ),
+        ' ',
+      )
     : light.name
 }
 
@@ -361,7 +380,7 @@ export const wholeHouseGroupNames = (
 // NOTE: Groups nest only because of which bulbs they share, so a bulb placed in
 // a room also has to be in every group around that room, and leaving a room has
 // to take it out of the rest of the old branch. Otherwise the rooms stop
-// nesting and the tree on the Lights tab falls apart. An empty target has no
+// nesting and the tree of groups falls apart. An empty target has no
 // branch yet, so only the leaf room is left: the bulb stays in the broader
 // groups that say where it is in the house.
 export const moveLightChange = (
@@ -834,7 +853,7 @@ export const decodeFrame = (text: string): Option.Option<IncomingFrame> =>
 export const Setting = defineTaggedUnion({
   Brightness: { value: Schema.Number },
   ColorTemp: { value: Schema.Number },
-  Color: { hex: Schema.String },
+  Color: { hue: Schema.Number },
 })
 export type Setting = typeof Setting.Type
 
@@ -850,7 +869,7 @@ export const settingFrame = (name: string, setting: Setting): string =>
     Setting.match(setting, {
       Brightness: ({ value }) => ({ brightness: value }),
       ColorTemp: ({ value }) => ({ color_temp: value }),
-      Color: ({ hex }) => ({ color: { hex } }),
+      Color: ({ hue }) => ({ color: { hue, saturation: FULL_SATURATION } }),
     }),
   )
 
@@ -981,6 +1000,32 @@ export const hueSaturationToHex = ({
   )
   return `#${Array.join(
     Array.map(channels, channel => toHexByte(channel + floor)),
+    '',
+  )}`
+}
+
+const MIREDS_PER_KELVIN = 1_000_000
+const COOL_BOUNDARY_HECTOKELVIN = 66
+
+const clampChannel = (channel: number): number =>
+  Number.clamp(channel / 255, { minimum: 0, maximum: 1 })
+
+// NOTE: Tanner Helland's fit of black-body color to temperature, close enough
+// that a warm bulb reads amber and a cool one reads blue on screen.
+export const miredsToHex = (mireds: number): string => {
+  const hectokelvin = MIREDS_PER_KELVIN / mireds / 100
+  const isCool = hectokelvin > COOL_BOUNDARY_HECTOKELVIN
+  const red = isCool ? 329.698727446 * (hectokelvin - 60) ** -0.1332047592 : 255
+  const green = isCool
+    ? 288.1221695283 * (hectokelvin - 60) ** -0.0755148492
+    : 99.4708025861 * Math.log(hectokelvin) - 161.1195681661
+  const blue = isCool
+    ? 255
+    : hectokelvin <= 19
+      ? 0
+      : 138.5177312231 * Math.log(hectokelvin - 10) - 305.0447927307
+  return `#${Array.join(
+    Array.map([red, green, blue], channel => toHexByte(clampChannel(channel))),
     '',
   )}`
 }

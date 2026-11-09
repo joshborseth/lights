@@ -10,9 +10,11 @@ import {
   update,
 } from './main'
 import { startServiceWorker } from './pwa'
+import { registerSheetGrabberElement } from './sheetGrabber'
 import { view } from './view'
 
 registerHouseSceneElement()
+registerSheetGrabberElement()
 
 const application = Runtime.makeApplication({
   Model,

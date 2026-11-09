@@ -12,12 +12,10 @@ import {
 } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
-import { Tabs } from '@foldkit/ui'
-
 import { DEFAULT_CONFIG, type Snapshot, WatcherMode } from './automation'
 import * as Automations from './automations'
 import { Pairing } from './domain'
-import { HouseSelection } from './house'
+import { HouseFocus } from './house'
 import {
   Connection,
   type Model,
@@ -75,8 +73,8 @@ const snapshot: Snapshot = {
 }
 
 const base: Model = {
-  tab: 'Lights',
-  tabs: Tabs.init({ id: 'app-tabs' }),
+  screen: 'House',
+  focus: HouseFocus.Overview(),
   automations: Automations.init,
   manage: Manage.init,
   connection: Connection.Connected(),
@@ -95,19 +93,16 @@ const base: Model = {
   drafts: [],
   activities: [],
   nextRequestId: 0,
-  maybeExpanded: Option.none(),
-  openGroups: [],
   maybeActiveSlider: Option.none(),
   pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
-  houseSelection: HouseSelection.Nothing(),
   maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
 }
 
 const onAutomations = (automations: Automations.Model): Model => ({
   ...base,
-  tab: 'Automations',
+  screen: 'Automations',
   automations,
 })
 
@@ -169,18 +164,13 @@ const withActivity = (activity: Snapshot['activity']): Model => {
   }
 }
 
-describe('tabs', () => {
-  test('starts on Lights and switches to Automations', () => {
+describe('opening Automations', () => {
+  test('starts on the house and opens as a page', () => {
     scene(
       { update, view },
       given(base),
-      expect(role('tab', { name: 'Lights' })).toHaveAttr(
-        'aria-selected',
-        'true',
-      ),
       expect(text('Loading automations…')).not.toExist(),
-      click(role('tab', { name: 'Automations' })),
-      Command.resolve(Tabs.FocusTab, Tabs.Message.CompletedFocusTab()),
+      click(role('button', { name: 'Automations' })),
       expect(text('Loading automations…')).toExist(),
     )
   })

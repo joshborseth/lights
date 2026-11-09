@@ -10,15 +10,13 @@ import {
   role,
   scene,
   text,
-  within,
 } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
-import { Tabs } from '@foldkit/ui'
-
 import * as Automations from './automations'
 import { Pairing, PresetLook } from './domain'
-import { HouseSelection } from './house'
+import { HouseFocus } from './house'
+import { type RoomId } from './housePlan'
 import {
   Connection,
   Message,
@@ -57,8 +55,8 @@ const settleTimedOut = (requestId: number) =>
   )
 
 const loaded: Model = {
-  tab: 'Lights',
-  tabs: Tabs.init({ id: 'app-tabs' }),
+  screen: 'House',
+  focus: HouseFocus.Overview(),
   automations: Automations.init,
   manage: Manage.init,
   connection: Connection.Connected(),
@@ -87,25 +85,41 @@ const loaded: Model = {
   drafts: [],
   activities: [],
   nextRequestId: 1,
-  maybeExpanded: Option.none(),
-  openGroups: ['Bedroom'],
   maybeActiveSlider: Option.none(),
   pageScroll: PageScroll.Still(),
   presetEditor: PresetEditor.Closed(),
-  houseSelection: HouseSelection.Nothing(),
   maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
 }
 
+const onBulb = (name: string): Model => ({
+  ...loaded,
+  focus: HouseFocus.Bulb({ name }),
+})
+
+const onRoom = (roomId: RoomId): Model => ({
+  ...loaded,
+  focus: HouseFocus.Room({ roomId }),
+})
+
+const onScenes: Model = { ...loaded, screen: 'Scenes' }
+
 describe('view', () => {
-  test('a group slider shows its stored level, not its brightest bulb', () => {
+  test('a group room shows its stored level, not its brightest bulb', () => {
     scene(
       { update, view },
-      given({ ...loaded, groupLevels: { 'All Lights': 60 } }),
-      expect(role('slider', { name: 'All Lights brightness' })).toHaveAttr(
+      given({ ...onRoom('Bedroom'), groupLevels: { Bedroom: 60 } }),
+      expect(role('slider', { name: 'Bedroom brightness' })).toHaveAttr(
         'aria-valuenow',
         '60',
       ),
+    )
+  })
+
+  test('a bulb slider shows its reported brightness', () => {
+    scene(
+      { update, view },
+      given(onBulb('Living Room Orb')),
       expect(role('slider', { name: 'Living Room Orb brightness' })).toHaveAttr(
         'aria-valuenow',
         '120',
@@ -123,7 +137,7 @@ describe('view', () => {
         connection: Connection.Connecting({ attempt: 0 }),
       }),
       expect(text('Connecting to your lights…')).toExist(),
-      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
+      expect(role('switch', { name: 'Bedroom power' })).not.toExist(),
     )
   })
 
@@ -147,7 +161,7 @@ describe('view', () => {
     )
   })
 
-  test('keeps the page while reconnecting, without live controls', () => {
+  test('keeps the house while reconnecting, without live controls', () => {
     scene(
       { update, view },
       given({
@@ -155,16 +169,16 @@ describe('view', () => {
         connection: Connection.WaitingToReconnect({ attempt: 0 }),
       }),
       expect(role('status')).toHaveText('Reconnecting…'),
-      expect(text('Living Room Orb')).toExist(),
+      expect(text('Bedroom')).toExist(),
     )
   })
 
   test('marks a bulb busy while its power change is confirmed', () => {
     scene(
       { update, view },
-      given(loaded),
+      given(onBulb('Bedroom UFO')),
       click(role('switch', { name: 'Bedroom UFO power' })),
-      expect(role('article', { name: 'Bedroom UFO' })).toHaveAttr(
+      expect(role('region', { name: 'Bedroom UFO' })).toHaveAttr(
         'aria-busy',
         'true',
       ),
@@ -184,40 +198,34 @@ describe('view', () => {
     scene(
       { update, view },
       given({
-        ...loaded,
+        ...onBulb('Bedroom UFO'),
         states: { 'Living Room Orb': on },
       }),
       expect(text('Not reporting')).toExist(),
     )
   })
 
-  test('shows groups, rooms, and live status', () => {
+  test('the overview shows each room with live status', () => {
     scene(
       { update, view },
       given(loaded),
       expect(role('status')).toHaveText('Live'),
-      expect(role('article', { name: 'All Lights' })).toExist(),
-      expect(role('article', { name: 'Bedroom' })).toExist(),
-      expect(role('switch', { name: 'Living Room Orb power' })).toHaveAttr(
+      expect(text('1 of 2 on')).toExist(),
+      expect(role('switch', { name: 'Living Room power' })).toHaveAttr(
         'aria-checked',
         'true',
       ),
-      expect(role('switch', { name: 'Bedroom UFO power' })).toHaveAttr(
+      expect(role('switch', { name: 'Bedroom power' })).toHaveAttr(
         'aria-checked',
         'false',
-      ),
-      expect(role('slider', { name: 'Living Room Orb brightness' })).toHaveAttr(
-        'aria-valuenow',
-        '120',
       ),
     )
   })
 
-  test('offers presets on every group', () => {
+  test('a room offers presets for its group', () => {
     scene(
       { update, view },
-      given(loaded),
-      expect(role('button', { name: 'Red on All Lights' })).toExist(),
+      given(onRoom('Bedroom')),
       click(role('button', { name: 'Red on Bedroom' })),
       Command.expectHas(
         SendFrame({
@@ -232,12 +240,10 @@ describe('view', () => {
     )
   })
 
-  test('offers each bulb its presets once it is expanded', () => {
+  test('a bulb offers presets for itself', () => {
     scene(
       { update, view },
-      given(loaded),
-      expect(role('button', { name: 'Red on Bedroom UFO' })).not.toExist(),
-      click(role('button', { name: 'Bedroom UFO color' })),
+      given(onBulb('Bedroom UFO')),
       click(role('button', { name: 'Rainbow on Bedroom UFO' })),
       Command.expectHas(
         SendFrame({
@@ -256,14 +262,13 @@ describe('view', () => {
     scene(
       { update, view },
       given({
-        ...loaded,
+        ...onBulb('Living Room Orb'),
         lights: [
           {
             ...light('Living Room Orb', 'a'),
             supportsColor: false,
           },
         ],
-        openGroups: ['All Lights'],
         presets: [
           ...loaded.presets,
           {
@@ -273,19 +278,19 @@ describe('view', () => {
           },
         ],
       }),
-      click(role('button', { name: 'Living Room Orb color' })),
       expect(role('button', { name: 'Warm on Living Room Orb' })).toExist(),
       expect(role('button', { name: 'Red on Living Room Orb' })).not.toExist(),
       expect(
         role('button', { name: 'Rainbow on Living Room Orb' }),
       ).not.toExist(),
+      expect(role('slider', { name: 'Living Room Orb color' })).not.toExist(),
     )
   })
 
-  test('clicking a bulb sends its power command', () => {
+  test('a bulb power button sends its repeated command', () => {
     scene(
       { update, view },
-      given(loaded),
+      given(onBulb('Bedroom UFO')),
       click(role('switch', { name: 'Bedroom UFO power' })),
       Command.expectHas(
         SendFrameTwice({
@@ -301,14 +306,36 @@ describe('view', () => {
     )
   })
 
-  test('clicking a group sends its command twice', () => {
+  test('the dock turns the whole house off through its group', () => {
     scene(
       { update, view },
       given(loaded),
-      click(role('switch', { name: 'All Lights power' })),
+      click(role('button', { name: 'All off' })),
+      Command.expectHas(
+        SendFrameTwice({
+          frame: JSON.stringify({
+            topic: 'All Lights/set',
+            payload: { state: 'OFF' },
+          }),
+        }),
+      ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
       settleTimedOut(1),
       settleTimedOut(2),
+    )
+  })
+
+  test('the dock says All on when every light is off', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        states: {
+          'Living Room Orb': { ...on, power: 'OFF' },
+          'Bedroom UFO': { ...on, power: 'OFF' },
+        },
+      }),
+      expect(role('button', { name: 'All on' })).toExist(),
     )
   })
 
@@ -316,7 +343,7 @@ describe('view', () => {
     const orb = Target.Light({ name: 'Living Room Orb' })
     scene(
       { update, view },
-      given(loaded),
+      given(onBulb('Living Room Orb')),
       keydown(
         role('slider', { name: 'Living Room Orb brightness' }),
         'ArrowRight',
@@ -339,6 +366,30 @@ describe('view', () => {
     )
   })
 
+  test('the color slider sends hue and saturation, never hex', () => {
+    const orb = Target.Light({ name: 'Living Room Orb' })
+    scene(
+      { update, view },
+      given(onBulb('Living Room Orb')),
+      keydown(role('slider', { name: 'Living Room Orb color' }), 'ArrowRight'),
+      Command.expectHas(
+        SendFrame({
+          frame: JSON.stringify({
+            topic: 'Living Room Orb/set',
+            payload: { color: { hue: 33, saturation: 100 } },
+          }),
+        }),
+      ),
+      Command.expectHas(WaitForThrottle({ target: orb, kind: 'Color' })),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      Command.resolve(
+        WaitForThrottle,
+        Message.CompletedThrottleWait({ target: orb, kind: 'Color' }),
+      ),
+      settleTimedOut(1),
+    )
+  })
+
   describe('touching a slider', () => {
     const orbSlider = role('slider', { name: 'Living Room Orb brightness' })
     const touch = {
@@ -347,6 +398,7 @@ describe('view', () => {
       clientX: 100,
       clientY: 300,
     }
+    const bulbSheet = onBulb('Living Room Orb')
     const viewWithSliderProbe: typeof view = (model, h) => {
       const page = view(model, h)
       return {
@@ -371,7 +423,7 @@ describe('view', () => {
     test('a finger press leaves the light alone', () => {
       scene(
         { update, view },
-        given(loaded),
+        given(bulbSheet),
         pointerDown(orbSlider, touch),
         Command.expectNone(),
         expect(orbSlider).toHaveAttr('aria-valuenow', '120'),
@@ -381,16 +433,16 @@ describe('view', () => {
     test('a touch while the page is still starts a gesture', () => {
       scene(
         { update, view: viewWithSliderProbe },
-        given(loaded),
+        given(bulbSheet),
         pointerDown(orbSlider, touch),
         expect(text('gesture started')).toExist(),
       )
     })
 
-    test('a touch while the page is scrolling is ignored', () => {
+    test('a touch while the sheet is scrolling is ignored', () => {
       scene(
         { update, view: viewWithSliderProbe },
-        given({ ...loaded, pageScroll: PageScroll.Moving() }),
+        given({ ...bulbSheet, pageScroll: PageScroll.Moving() }),
         pointerDown(orbSlider, touch),
         expectIgnored(),
         Command.expectNone(),
@@ -401,7 +453,7 @@ describe('view', () => {
     test('a touch on the track leaves the slider alone', () => {
       scene(
         { update, view: viewWithSliderProbe },
-        given(loaded),
+        given(bulbSheet),
         pointerDown('[data-slot="slider-track"]', touch),
         expectIgnored(),
         Command.expectNone(),
@@ -412,41 +464,10 @@ describe('view', () => {
     test('the knob leaves vertical panning to the browser', () => {
       scene(
         { update, view },
-        given(loaded),
+        given(bulbSheet),
         expect(orbSlider).toHaveStyle('touch-action', 'pan-y'),
       )
     })
-  })
-
-  test('reveals color controls on request', () => {
-    scene(
-      { update, view },
-      given(loaded),
-      expect(role('slider', { name: 'Bedroom UFO temperature' })).not.toExist(),
-      click(role('button', { name: 'Bedroom UFO color' })),
-      expect(role('slider', { name: 'Bedroom UFO temperature' })).toExist(),
-    )
-  })
-
-  test('a room shows its controls and hides its bulbs until opened', () => {
-    scene(
-      { update, view },
-      given({ ...loaded, openGroups: [] }),
-      expect(role('switch', { name: 'Bedroom power' })).toExist(),
-      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
-      expect(role('button', { name: 'Bedroom bulbs' })).toHaveAttr(
-        'aria-expanded',
-        'false',
-      ),
-      click(role('button', { name: 'Bedroom bulbs' })),
-      expect(role('switch', { name: 'Bedroom UFO power' })).toExist(),
-      expect(role('button', { name: 'Bedroom bulbs' })).toHaveAttr(
-        'aria-expanded',
-        'true',
-      ),
-      click(role('button', { name: 'Bedroom bulbs' })),
-      expect(role('switch', { name: 'Bedroom UFO power' })).not.toExist(),
-    )
   })
 
   describe('with the rooms nested', () => {
@@ -470,41 +491,22 @@ describe('view', () => {
         'Bedroom UFO': { ...on, power: 'OFF' },
         'Bathroom Orb': on,
       },
-      openGroups: ['Living Room'],
     }
 
-    test('a room sits inside its parent group, with short bulb names', () => {
+    test('a bulb is named by what sets it apart in its room', () => {
       scene(
         { update, view },
-        given(nested),
-        expect(
-          within(
-            role('article', { name: 'Rest of the House' }),
-            role('article', { name: 'Living Room' }),
-          ),
-        ).toExist(),
-        expect(
-          within(role('article', { name: 'Living Room Orb' }), text('Orb')),
-        ).toExist(),
-        expect(
-          within(
-            role('article', { name: 'Rest of the House' }),
-            role('switch', { name: 'Bathroom Orb power' }),
-          ),
-        ).toExist(),
+        given({ ...nested, focus: HouseFocus.Room({ roomId: 'LivingRoom' }) }),
+        expect(text('Orb')).toExist(),
+        expect(text('Shroom')).toExist(),
       )
     })
 
-    test('a parent says when the bulbs below it differ', () => {
+    test('a room says when its bulbs differ', () => {
       scene(
         { update, view },
-        given(nested),
-        expect(
-          within(
-            role('article', { name: 'Living Room' }),
-            text('2 of 2 on · mixed'),
-          ),
-        ).toExist(),
+        given({ ...nested, focus: HouseFocus.Room({ roomId: 'LivingRoom' }) }),
+        expect(text('2 of 2 on · mixed')).toExist(),
       )
     })
 
@@ -526,21 +528,112 @@ describe('view', () => {
         settleTimedOut(2),
       )
     })
+  })
 
-    test('nested rooms get group presets', () => {
+  describe('a room without a usable group', () => {
+    const kitchen: Model = {
+      ...loaded,
+      lights: [light('Kitchen Left', 'k1'), light('Kitchen Right', 'k2')],
+      groups: [
+        { name: 'Kitchen', memberAddresses: [] },
+        { name: 'All Lights', memberAddresses: ['k1', 'k2'] },
+      ],
+      states: { 'Kitchen Left': on, 'Kitchen Right': on },
+      focus: HouseFocus.Room({ roomId: 'Kitchen' }),
+    }
+
+    test('power goes to each bulb, twice', () => {
       scene(
         { update, view },
-        given(nested),
-        expect(role('button', { name: 'Red on Rest of the House' })).toExist(),
-        expect(role('button', { name: 'Red on Living Room' })).toExist(),
+        given(kitchen),
+        click(role('switch', { name: 'Kitchen power' })),
+        Command.expectHas(
+          SendFrameTwice({
+            frame: JSON.stringify({
+              topic: 'Kitchen Left/set',
+              payload: { state: 'OFF' },
+            }),
+          }),
+        ),
+        Command.expectHas(
+          SendFrameTwice({
+            frame: JSON.stringify({
+              topic: 'Kitchen Right/set',
+              payload: { state: 'OFF' },
+            }),
+          }),
+        ),
+        Command.resolve(
+          SendFrameTwice({
+            frame: JSON.stringify({
+              topic: 'Kitchen Left/set',
+              payload: { state: 'OFF' },
+            }),
+          }),
+          Message.SucceededSendFrame(),
+        ),
+        Command.resolve(
+          SendFrameTwice({
+            frame: JSON.stringify({
+              topic: 'Kitchen Right/set',
+              payload: { state: 'OFF' },
+            }),
+          }),
+          Message.SucceededSendFrame(),
+        ),
+        settleTimedOut(1),
+        settleTimedOut(2),
+      )
+    })
+
+    test('a preset goes to each bulb', () => {
+      scene(
+        { update, view },
+        given(kitchen),
+        click(role('button', { name: 'Red on Kitchen' })),
+        Command.expectHas(
+          SendFrame({
+            frame: JSON.stringify({
+              topic: 'preset/set',
+              payload: { name: 'Red', light: 'Kitchen Left' },
+            }),
+          }),
+        ),
+        Command.expectHas(
+          SendFrame({
+            frame: JSON.stringify({
+              topic: 'preset/set',
+              payload: { name: 'Red', light: 'Kitchen Right' },
+            }),
+          }),
+        ),
+        Command.resolve(
+          SendFrame({
+            frame: JSON.stringify({
+              topic: 'preset/set',
+              payload: { name: 'Red', light: 'Kitchen Left' },
+            }),
+          }),
+          Message.SucceededSendFrame(),
+        ),
+        Command.resolve(
+          SendFrame({
+            frame: JSON.stringify({
+              topic: 'preset/set',
+              payload: { name: 'Red', light: 'Kitchen Right' },
+            }),
+          }),
+          Message.SucceededSendFrame(),
+        ),
+        settleTimedOut(1),
       )
     })
   })
 
-  test('Rainbow has no edit button', () => {
+  test('the Scenes page has no edit button for Rainbow', () => {
     scene(
       { update, view },
-      given(loaded),
+      given(onScenes),
       expect(role('button', { name: 'Edit Red' })).toExist(),
       expect(role('button', { name: 'Edit Rainbow' })).not.toExist(),
     )
@@ -549,7 +642,7 @@ describe('view', () => {
   test('new preset opens an editor that needs a name', () => {
     scene(
       { update, view },
-      given(loaded),
+      given(onScenes),
       click(role('button', { name: 'New preset' })),
       expect(text('Give the preset a name.')).toExist(),
       expect(role('button', { name: 'Save' })).toBeDisabled(),
@@ -559,7 +652,7 @@ describe('view', () => {
   test('saving shows progress and locks the editor', () => {
     scene(
       { update, view },
-      given(loaded),
+      given(onScenes),
       click(role('button', { name: 'Edit Red' })),
       click(role('button', { name: 'Save' })),
       expect(role('button', { name: 'Saving…' })).toBeDisabled(),

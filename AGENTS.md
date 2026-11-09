@@ -22,7 +22,7 @@ Do not send commands to the real lights during development unless Josh has asked
 
 `repos/foldkit` landed through a squash merge, so `git subtree pull` cannot find it. To upgrade it, remove the folder, commit, and run `git subtree add` again at the new release tag.
 
-The House tab's floor plan in `src/housePlan.ts` is a first pass estimated from Josh's photos, not the final model. See the House tab notes in the migration plan.
+The floor plan in `src/housePlan.ts` is a first pass estimated from Josh's photos, not the final model. The main screen is the 3D house; see its notes in the migration plan.
 
 UI components come from foldcn and live in `src/components/ui/`, with `src/lib/icons.ts` and `src/lib/utils.ts`. They are copied source: Oxlint and Oxfmt skip them, and `tsc` checks them. Before adding one, read the guidance below.
 

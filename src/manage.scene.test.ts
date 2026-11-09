@@ -14,11 +14,9 @@ import {
 } from 'foldkit/scene'
 import { describe, test } from 'vitest'
 
-import { Tabs } from '@foldkit/ui'
-
 import * as Automations from './automations'
 import { IncomingFrame, Pairing } from './domain'
-import { HouseSelection } from './house'
+import { HouseFocus } from './house'
 import {
   Connection,
   Message,
@@ -40,8 +38,8 @@ const light = (name: string, address: string) => ({
 })
 
 const base: Model = {
-  tab: 'Manage',
-  tabs: Tabs.init({ id: 'app-tabs' }),
+  screen: 'Devices',
+  focus: HouseFocus.Overview(),
   automations: Automations.init,
   manage: { ...Manage.init, clientTag: 'x' },
   connection: Connection.Connected(),
@@ -61,11 +59,8 @@ const base: Model = {
   drafts: [],
   activities: [],
   nextRequestId: 0,
-  maybeExpanded: Option.none(),
-  openGroups: [],
   maybeActiveSlider: Option.none(),
   presetEditor: PresetEditor.Closed(),
-  houseSelection: HouseSelection.Nothing(),
   maybeHouseFailure: Option.none(),
   maybeProblem: Option.none(),
   pageScroll: PageScroll.Still(),

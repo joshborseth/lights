@@ -1,4 +1,4 @@
-import { Array, Match, Option, pipe } from 'effect'
+import { Array, Match, Option, Order, pipe } from 'effect'
 import {
   AdditiveBlending,
   BackSide,
@@ -6,18 +6,22 @@ import {
   BufferGeometry,
   CanvasTexture,
   Color,
+  CubeCamera,
   CylinderGeometry,
+  DoubleSide,
   Float32BufferAttribute,
   FrontSide,
   Group,
+  LinearFilter,
   Material,
   Mesh,
   MeshBasicMaterial,
+  NearestFilter,
+  NoColorSpace,
   PerspectiveCamera,
   Plane,
   PlaneGeometry,
   Raycaster,
-  RingGeometry,
   SRGBColorSpace,
   Scene,
   ShaderMaterial,
@@ -26,6 +30,8 @@ import {
   SpriteMaterial,
   Vector2,
   Vector3,
+  Vector4,
+  WebGLCubeRenderTarget,
   WebGLRenderer,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -33,11 +39,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 import {
   HouseBulb,
-  HouseSelection,
+  HouseFocus,
   nearestBulbName,
   roomAreas,
-  roomAt,
-  sharesLight,
+  roomById,
   wallSpans,
 } from './house'
 import {
@@ -52,104 +57,242 @@ import {
   type WallSide,
 } from './housePlan'
 
-const MAX_BULBS_PER_ROOM = 10
+const BULB_SLOTS = 10
 const MAX_DEVICE_PIXEL_RATIO = 2
-const FIELD_OF_VIEW = 32
-const CAMERA_NEAR = 1
+const FIELD_OF_VIEW = 30
+const CAMERA_NEAR = 0.5
 const CAMERA_FAR = 200
-const INITIAL_POLAR_ANGLE = 0.62
-const INITIAL_AZIMUTH = -Math.PI / 2 + 0.22
-const FRAMING_MARGIN = 1.04
-const MIN_ZOOM = 0.42
-const MAX_ZOOM = 1.3
-const MIN_POLAR_ANGLE = 0.12
-const MAX_POLAR_ANGLE = 1.2
-const ROTATE_DAMPING = 0.09
 
-const WALL_HEX = '#a09c97'
-const WALL_CAP_HEX = '#55555f'
-const WALL_CAP_THICKNESS = 0.14
-const WALL_SHELL_HEX = '#a7adc2'
-const WALL_SHELL_OPACITY = 0.1
-const SLAB_HEX = '#1b1b22'
-const SLAB_MARGIN = 0.3
-const SLAB_THICKNESS = 0.2
+const OVERVIEW_POLAR = 0.66
+const OVERVIEW_AZIMUTH = 0.34
+const ROOM_POLAR = 0.86
+const INTRO_POLAR = 0.3
+const INTRO_AZIMUTH_OFFSET = 0.75
+const INTRO_DISTANCE_FACTOR = 1.5
+const INTRO_MS = 1700
+const FLIGHT_MS = 950
+
+const MIN_POLAR_ANGLE = 0.1
+const MAX_POLAR_ANGLE = 1.25
+const ROTATE_DAMPING = 0.09
+const OVERVIEW_MIN_ZOOM = 0.45
+const OVERVIEW_MAX_ZOOM = 1.25
+const ROOM_MIN_ZOOM = 0.55
+const ROOM_MAX_ZOOM = 1.5
+
+const OVERVIEW_TOP_INSET_PX = 92
+const OVERVIEW_BOTTOM_INSET_PX = 110
+const ROOM_TOP_INSET_PX = 76
+const VIEW_EDGE_MARGIN_PX = 10
+const WIDE_LAYOUT_QUERY = '(min-width: 768px)'
+const SIDE_PANEL_GAP_PX = 16
+const ANCHOR_EDGE_MARGIN_PX = 8
+const ANCHOR_GAP_PX = 6
+const PANEL_SELECTOR = '[data-scene-panel]'
+
+const HOUSE_CENTER_HEIGHT = 0.5
+const ROOM_FRAME_HEIGHT = 1.5
+const ROOM_FRAME_MARGIN = 0.15
+
+const WALL_HEX = '#d2cdc5'
+const WALL_CAP_HEX = '#b9b6b1'
+const WALL_CAP_THICKNESS = 0.13
+const WALL_CAP_BEVEL = 0.02
+const CAP_UNLIT_SHADE = 0.34
+const WALL_SHELL_HEX = '#94a3c8'
+const WALL_SHELL_OPACITY = 0.06
+const SLAB_HEX = '#141721'
+const SLAB_MARGIN = 0.22
+const SLAB_THICKNESS = 0.28
 const POLE_HEX = '#4c4c56'
 const POLE_RADIUS = 0.012
-const OFF_BULB_HEX = '#55555f'
-const SELECTION_HEX = '#ffffff'
-const LABEL_HEX = '#f4f2ee'
+const OFF_BULB_HEX = '#3a3d48'
 
-const ORB_RADIUS = 0.1
+const ORB_RADIUS = 0.07
 const ROUND_SEGMENTS = 28
 const BALL_HEIGHT_SEGMENTS = 18
-const HALO_MIN_SCALE = 1.3
-const HALO_LEVEL_SCALE = 2.3
-const HALO_BASE_OPACITY = 0.35
-const HALO_LEVEL_OPACITY = 0.6
-const LIGHT_STRENGTH = 4.6
-const FADE_RATE = 0.2
+const HALO_MIN_SCALE = 0.7
+const HALO_LEVEL_SCALE = 1.25
+const HALO_BASE_OPACITY = 0.16
+const HALO_LEVEL_OPACITY = 0.4
+const LIGHT_STRENGTH = 2.9
+const FADE_MS = 150
 const FADE_EPSILON = 0.004
 const FULL_ORB_LEVEL = 0.3
-const RING_INNER = 0.3
-const RING_OUTER = 0.36
-const RING_ELEVATION = 0.03
-
-const LABEL_FONT_PX = 64
-const LABEL_PADDING_PX = 16
-const LABEL_WORLD_HEIGHT = 0.5
-const LABEL_ELEVATION = 0.1
-const LABEL_OPACITY = 0.62
+const LEVEL_BLOOM_POWER = 0.85
 
 const TAP_SLOP_PX = 10
 const TAP_MAX_MS = 450
-const BULB_TAP_RADIUS_PX = 30
+const BULB_TAP_RADIUS_PX = 26
 const BULB_RENDER_ORDER = 1
 const HALO_TEXTURE_PX = 128
+const GROUND_GLOW_SIZE = 26
+const GROUND_GLOW_HEIGHT = -0.32
+const GROUND_GLOW_STRENGTH = 0.2
 
-const ROOM_VERTEX_SHADER = `
-  attribute vec3 color;
-  varying vec3 vAlbedo;
-  varying vec3 vNormal;
+const SHADOW_MAP_PX = 384
+const SHADOW_NEAR = 0.5
+const SHADOW_RANGE = 16
+const SHADOW_TAPS_AT_REST = 8
+const SHADOW_TAPS_IN_MOTION = 3
+
+const CONTACT_TEXTURE_PX = 1024
+const CONTACT_MARGIN = 1
+const CONTACT_FLAT_HEIGHT = 0.05
+const CONTACT_FLOOR_REACH = 0.3
+const CONTACT_BLUR_PX = 22
+const CONTACT_WALL_BLUR_PX = 30
+const CONTACT_WALL_WIDTH_PX = 10
+const CONTACT_SHADE = 'rgba(0,0,0,0.62)'
+const CONTACT_WALL_SHADE = 'rgba(0,0,0,0.5)'
+const OFFSCREEN_SHIFT_PX = 8192
+
+const FOCUS_FADE_MS = 420
+const MAX_FRAME_STEP_MS = 400
+const CUT_INSET = 0.03
+const CUT_SHELL_MARGIN = -0.1
+const CUT_OPEN_DISTANCE = 14
+const CUT_FACING_THRESHOLD = 0.45
+const OUT_OF_FOCUS_HALO = 0.2
+
+const SHADOW_VERTEX_SHADER = `
   varying vec3 vWorldPosition;
 
   void main() {
-    vAlbedo = color;
-    vNormal = normal;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorldPosition = world.xyz;
     gl_Position = projectionMatrix * viewMatrix * world;
   }
 `
 
-const ROOM_FRAGMENT_SHADER = `
-  uniform vec3 bulbPositions[${MAX_BULBS_PER_ROOM}];
-  uniform vec3 bulbColors[${MAX_BULBS_PER_ROOM}];
-  uniform int bulbCount;
-  uniform float highlight;
-  varying vec3 vAlbedo;
-  varying vec3 vNormal;
+const SHADOW_FRAGMENT_SHADER = `
+  uniform vec3 lightPosition;
   varying vec3 vWorldPosition;
 
   void main() {
-    vec3 normal = normalize(vNormal);
-    float skyFacing = 0.55 + 0.45 * normal.y;
-    vec3 received = vec3(0.06, 0.07, 0.1) * skyFacing;
-    received += vec3(0.16, 0.16, 0.18) * highlight;
+    float stored = clamp(length(vWorldPosition - lightPosition) / ${SHADOW_RANGE}.0, 0.0, 1.0);
+    float scaled = stored * 255.0;
+    gl_FragColor = vec4(floor(scaled) / 255.0, fract(scaled), 0.0, 1.0);
+  }
+`
 
-    for (int index = 0; index < bulbCount; index++) {
-      vec3 toBulb = bulbPositions[index] - vWorldPosition;
-      float squaredDistance = dot(toBulb, toBulb);
-      float facing = max(dot(normal, normalize(toBulb)), 0.0);
-      float falloff = 1.0 / (1.0 + 0.55 * squaredDistance);
-      received += bulbColors[index] * (0.2 + 0.8 * facing) * falloff;
+const HOUSE_VERTEX_SHADER = `
+  attribute vec3 color;
+  attribute float roomIndex;
+  attribute float lightSpace;
+  varying vec3 vAlbedo;
+  varying vec3 vNormal;
+  varying vec3 vWorldPosition;
+  varying float vRoomIndex;
+  varying float vLightSpace;
+
+  void main() {
+    vAlbedo = color;
+    vNormal = normal;
+    vRoomIndex = roomIndex;
+    vLightSpace = lightSpace;
+    vec4 world = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = world.xyz;
+    gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`
+
+const bulbSlotLines = Array.join(
+  Array.makeBy(
+    BULB_SLOTS,
+    index =>
+      `if (bulbCount > ${index}) { received += shade(bulbPositions[${index}], bulbColors[${index}], bulbSpaces[${index}], shadowMaps[${index}], normal, rotation); }`,
+  ),
+  '\n',
+)
+
+// NOTE: Direct light is blocked by the baked shadow maps, so it stops at walls
+// and spills through doorways by itself. The bounce term is what fills a real
+// room with light, and only reaches surfaces in the bulb's own light space.
+const HOUSE_FRAGMENT_SHADER = `
+  uniform vec3 bulbPositions[${BULB_SLOTS}];
+  uniform vec3 bulbColors[${BULB_SLOTS}];
+  uniform float bulbSpaces[${BULB_SLOTS}];
+  uniform samplerCube shadowMaps[${BULB_SLOTS}];
+  uniform int bulbCount;
+  uniform int shadowTaps;
+  uniform float focusRoom;
+  uniform float focusMix;
+  uniform sampler2D contactShadows;
+  uniform vec4 contactArea;
+  uniform vec2 cutX;
+  uniform vec2 cutZ;
+  varying vec3 vAlbedo;
+  varying vec3 vNormal;
+  varying vec3 vWorldPosition;
+  varying float vRoomIndex;
+  varying float vLightSpace;
+
+  float visibility(samplerCube map, vec3 fromBulb, float distanceToBulb, float bias, float rotation) {
+    vec3 direction = fromBulb / distanceToBulb;
+    vec3 axis = abs(direction.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(direction, axis));
+    vec3 bitangent = cross(direction, tangent);
+    float blocked = 0.0;
+    for (int tap = 0; tap < shadowTaps; tap++) {
+      float angle = float(tap) * 2.39996 + rotation;
+      float reach = sqrt((float(tap) + 0.5) / float(shadowTaps)) * 0.016;
+      vec3 sampleDirection = direction + (tangent * cos(angle) + bitangent * sin(angle)) * reach;
+      vec4 packedDepth = textureCube(map, sampleDirection);
+      float stored = (packedDepth.r + packedDepth.g / 255.0) * ${SHADOW_RANGE}.0;
+      blocked += step(stored + bias, distanceToBulb);
     }
+    return 1.0 - blocked / float(shadowTaps);
+  }
+
+  vec3 shade(vec3 bulbPosition, vec3 bulbColor, float bulbSpace, samplerCube map, vec3 normal, float rotation) {
+    if (dot(bulbColor, bulbColor) < 0.00001) {
+      return vec3(0.0);
+    }
+    vec3 toBulb = bulbPosition - vWorldPosition;
+    float squaredDistance = dot(toBulb, toBulb);
+    float distanceToBulb = sqrt(squaredDistance);
+    float facing = max(dot(normal, toBulb / distanceToBulb), 0.0);
+    float falloff = 1.0 / (1.0 + 0.62 * squaredDistance);
+    float bias = 0.04 + 0.1 * (1.0 - facing);
+    float visible = facing > 0.0 ? visibility(map, -toBulb, distanceToBulb, bias, rotation) : 0.0;
+    float isSameSpace = step(abs(bulbSpace - vLightSpace), 0.5);
+    float fill = isSameSpace * 0.16 * (0.72 + 0.28 * normal.y) / (1.0 + 0.22 * squaredDistance);
+    float glow = smoothstep(0.62, 0.1, distanceToBulb) * 1.8;
+    return bulbColor * (facing * falloff * visible + fill + glow);
+  }
+
+  void main() {
+    float isOtherRoom = 1.0 - step(abs(vRoomIndex - focusRoom), 0.5);
+    if (isOtherRoom > 0.5 && (cutX.x * vWorldPosition.x > cutX.y || cutZ.x * vWorldPosition.z > cutZ.y)) {
+      discard;
+    }
+    vec3 normal = normalize(vNormal);
+    float rotation = 6.28318 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float skyFacing = 0.55 + 0.45 * normal.y;
+    vec3 received = vec3(0.075, 0.1, 0.19) * skyFacing;
+
+    ${bulbSlotLines}
 
     float isFloor = step(0.9, normal.y) * step(vWorldPosition.y, 0.01);
-    float plankSeam = smoothstep(0.0, 0.03, fract(vWorldPosition.z * 2.2));
-    vec3 surface = vAlbedo * mix(1.0, 0.82 + 0.18 * plankSeam, isFloor);
+    float isWall = 1.0 - step(0.2, abs(normal.y));
+    float plankRow = floor(vWorldPosition.z * 5.4);
+    float plankTint = fract(sin(plankRow * 91.7) * 43758.5453);
+    float plankOffset = plankTint * 3.0;
+    float endJoint = smoothstep(0.0, 0.012, fract(vWorldPosition.x * 0.55 + plankOffset));
+    float seam = smoothstep(0.0, 0.05, fract(vWorldPosition.z * 5.4));
+    float planks = (0.86 + 0.14 * plankTint) * (0.8 + 0.2 * seam) * (0.86 + 0.14 * endJoint);
+    vec2 contactPoint = (vWorldPosition.xz - contactArea.xy) / contactArea.zw;
+    float contact = texture2D(contactShadows, contactPoint).r;
+    float wallFoot = 0.68 + 0.32 * smoothstep(0.0, 0.42, vWorldPosition.y);
+    vec3 surface = vAlbedo * mix(1.0, planks * contact, isFloor) * mix(1.0, wallFoot, isWall);
 
-    gl_FragColor = vec4(1.0 - exp(-surface * received * 1.6), 1.0);
+    vec3 lit = surface * received;
+    float isOutOfFocus = focusMix * (1.0 - step(abs(vRoomIndex - focusRoom), 0.5));
+    float luminance = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+    lit = mix(lit, vec3(luminance) * vec3(0.72, 0.8, 1.0) * 0.42, isOutOfFocus * 0.82);
+
+    gl_FragColor = vec4(1.0 - exp(-lit * 1.6), 1.0);
     #include <colorspace_fragment>
   }
 `
@@ -162,7 +305,7 @@ export type HouseSceneCallbacks = Readonly<{
 
 export type HouseScene = Readonly<{
   setBulbs: (bulbs: ReadonlyArray<HouseBulb>) => void
-  setSelection: (selection: HouseSelection) => void
+  setFocus: (focus: HouseFocus) => void
   dispose: () => void
 }>
 
@@ -177,21 +320,64 @@ type BulbVisual = {
   currentLevel: number
 }
 
-type LightSlot = Readonly<{ position: Vector3; color: Vector3 }>
-
-type RoomVisual = Readonly<{
-  id: RoomId
-  slots: ReadonlyArray<LightSlot>
-  bulbCount: { value: number }
-  highlight: { value: number }
-}>
-
 type TapStart = Readonly<{
   pointerId: number
   x: number
   y: number
   time: number
 }>
+
+type Insets = Readonly<{ top: number; right: number; bottom: number }>
+
+type CameraPose = Readonly<{
+  target: Vector3
+  distance: number
+  polar: number
+  azimuth: number
+  offsetX: number
+  offsetY: number
+}>
+
+type Flight = Readonly<{
+  from: CameraPose
+  to: CameraPose
+  durationMs: number
+}>
+
+type Bounds = Readonly<{
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
+  height: number
+}>
+
+const easeInOutCubic = (progress: number): number =>
+  progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
+
+const shortestAngle = (from: number, to: number): number => {
+  const turn = Math.PI * 2
+  return ((((to - from) % turn) + turn * 1.5) % turn) - Math.PI
+}
+
+const mix = (from: number, to: number, amount: number): number =>
+  from + (to - from) * amount
+
+const withConstantAttribute = <Geometry extends BufferGeometry>(
+  geometry: Geometry,
+  name: string,
+  value: number,
+): Geometry => {
+  const vertexCount = geometry.getAttribute('position').count
+  geometry.setAttribute(
+    name,
+    new Float32BufferAttribute(
+      Array.makeBy(vertexCount, () => value),
+      1,
+    ),
+  )
+  return geometry
+}
 
 const withColor = <Geometry extends BufferGeometry>(
   geometry: Geometry,
@@ -255,7 +441,7 @@ const wallCap = (
   const isAlongX = side === 'North' || side === 'South'
   const cap = new BoxGeometry(
     isAlongX ? length : WALL_CAP_THICKNESS,
-    0.02,
+    WALL_CAP_BEVEL,
     isAlongX ? WALL_CAP_THICKNESS : length,
   )
   if (side === 'North') {
@@ -331,46 +517,52 @@ const mergedOrThrow = (
   return merged
 }
 
-const makeSlots = (): ReadonlyArray<LightSlot> =>
-  Array.makeBy(MAX_BULBS_PER_ROOM, () => ({
-    position: new Vector3(),
-    color: new Vector3(),
-  }))
+const LIGHT_SPACES = Array.dedupe(Array.map(ROOMS, room => room.lightSpace))
 
-const makeRoomVisual = (room: HouseRoom, scene: Scene): RoomVisual => {
-  const slots = makeSlots()
-  const bulbCount = { value: 0 }
-  const highlight = { value: 0 }
-  const material = new ShaderMaterial({
-    side: FrontSide,
-    vertexShader: ROOM_VERTEX_SHADER,
-    fragmentShader: ROOM_FRAGMENT_SHADER,
-    uniforms: {
-      bulbPositions: { value: Array.map(slots, slot => slot.position) },
-      bulbColors: { value: Array.map(slots, slot => slot.color) },
-      bulbCount,
-      highlight,
-    },
-  })
-  const geometry = mergedOrThrow([
-    ...Array.flatMap(roomAreas(room), area => [
-      floorGeometry(area, room.floorHex),
-      ...roomWalls(area, (wallArea, side, from, to) =>
-        withColor(wallQuad(wallArea, side, from, to), WALL_HEX),
-      ),
-    ]),
-    ...Array.map(room.furniture, furnitureGeometry),
-  ])
-  scene.add(new Mesh(geometry, material))
-  return { id: room.id, slots, bulbCount, highlight }
-}
+const lightSpaceOf = (room: HouseRoom): number =>
+  Math.max(
+    0,
+    LIGHT_SPACES.findIndex(space => space === room.lightSpace),
+  )
 
-const addHouseShell = (scene: Scene): void => {
+const roomIndexOf = (roomId: RoomId): number =>
+  ROOMS.findIndex(room => room.id === roomId)
+
+const roomGeometry = (room: HouseRoom, roomIndex: number): BufferGeometry =>
+  withConstantAttribute(
+    withConstantAttribute(
+      mergedOrThrow([
+        ...Array.flatMap(roomAreas(room), area => [
+          floorGeometry(area, room.floorHex),
+          ...roomWalls(area, (wallArea, side, from, to) =>
+            withColor(wallQuad(wallArea, side, from, to), WALL_HEX),
+          ),
+        ]),
+        ...Array.map(room.furniture, furnitureGeometry),
+      ]),
+      'roomIndex',
+      roomIndex,
+    ),
+    'lightSpace',
+    lightSpaceOf(room),
+  )
+
+const houseGeometry = (): BufferGeometry =>
+  mergedOrThrow(Array.map(ROOMS, roomGeometry))
+
+const addHouseShell = (
+  scene: Scene,
+  cutPlanes: ReadonlyArray<Plane>,
+): MeshBasicMaterial => {
   const areas = Array.flatMap(ROOMS, roomAreas)
   const caps = mergedOrThrow(
     Array.flatMap(areas, area => roomWalls(area, wallCap)),
   )
-  scene.add(new Mesh(caps, new MeshBasicMaterial({ color: WALL_CAP_HEX })))
+  const capMaterial = new MeshBasicMaterial({
+    color: WALL_CAP_HEX,
+    clippingPlanes: [...cutPlanes],
+  })
+  scene.add(new Mesh(caps, capMaterial))
 
   const ghostWalls = mergedOrThrow(
     Array.flatMap(areas, area => roomWalls(area, wallQuad)),
@@ -384,6 +576,7 @@ const addHouseShell = (scene: Scene): void => {
         transparent: true,
         opacity: WALL_SHELL_OPACITY,
         depthWrite: false,
+        clippingPlanes: [...cutPlanes],
       }),
     ),
   )
@@ -401,7 +594,16 @@ const addHouseShell = (scene: Scene): void => {
       ),
     ),
   )
-  scene.add(new Mesh(slab, new MeshBasicMaterial({ color: SLAB_HEX })))
+  scene.add(
+    new Mesh(
+      slab,
+      new MeshBasicMaterial({
+        color: SLAB_HEX,
+        clippingPlanes: [...cutPlanes],
+      }),
+    ),
+  )
+  return capMaterial
 }
 
 const drawCanvas = (
@@ -416,67 +618,150 @@ const drawCanvas = (
     Option.fromNullishOr(canvas.getContext('2d')),
     Option.map(context => {
       draw(context)
-      const texture = new CanvasTexture(canvas)
-      texture.colorSpace = SRGBColorSpace
-      return texture
+      return new CanvasTexture(canvas)
     }),
   )
 }
 
 const makeHaloTexture = (): Option.Option<CanvasTexture> =>
-  drawCanvas(HALO_TEXTURE_PX, HALO_TEXTURE_PX, context => {
-    const middle = HALO_TEXTURE_PX / 2
-    const gradient = context.createRadialGradient(
-      middle,
-      middle,
-      0,
-      middle,
-      middle,
-      middle,
-    )
-    gradient.addColorStop(0, 'rgba(255,255,255,0.95)')
-    gradient.addColorStop(0.18, 'rgba(255,255,255,0.45)')
-    gradient.addColorStop(0.5, 'rgba(255,255,255,0.09)')
-    gradient.addColorStop(1, 'rgba(255,255,255,0)')
-    context.fillStyle = gradient
-    context.fillRect(0, 0, HALO_TEXTURE_PX, HALO_TEXTURE_PX)
-  })
-
-const LABEL_FONT = `600 ${LABEL_FONT_PX}px 'Geist Variable', system-ui, sans-serif`
-
-const addRoomLabel = (room: HouseRoom, scene: Scene): void => {
-  const measured = document.createElement('canvas').getContext('2d')
-  if (measured === null) {
-    return
-  }
-  measured.font = LABEL_FONT
-  const textWidth = Math.ceil(measured.measureText(room.label).width)
-  const width = textWidth + LABEL_PADDING_PX * 2
-  const height = LABEL_FONT_PX + LABEL_PADDING_PX * 2
-  const maybeTexture = drawCanvas(width, height, context => {
-    context.font = LABEL_FONT
-    context.fillStyle = LABEL_HEX
-    context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText(room.label, width / 2, height / 2)
-  })
-  if (Option.isNone(maybeTexture)) {
-    return
-  }
-  const label = new Sprite(
-    new SpriteMaterial({
-      map: maybeTexture.value,
-      transparent: true,
-      opacity: LABEL_OPACITY,
-      depthTest: false,
-      depthWrite: false,
+  Option.map(
+    drawCanvas(HALO_TEXTURE_PX, HALO_TEXTURE_PX, context => {
+      const middle = HALO_TEXTURE_PX / 2
+      const gradient = context.createRadialGradient(
+        middle,
+        middle,
+        0,
+        middle,
+        middle,
+        middle,
+      )
+      gradient.addColorStop(0, 'rgba(255,255,255,0.95)')
+      gradient.addColorStop(0.18, 'rgba(255,255,255,0.45)')
+      gradient.addColorStop(0.5, 'rgba(255,255,255,0.09)')
+      gradient.addColorStop(1, 'rgba(255,255,255,0)')
+      context.fillStyle = gradient
+      context.fillRect(0, 0, HALO_TEXTURE_PX, HALO_TEXTURE_PX)
     }),
+    texture => {
+      texture.colorSpace = SRGBColorSpace
+      return texture
+    },
   )
-  label.scale.set((LABEL_WORLD_HEIGHT * width) / height, LABEL_WORLD_HEIGHT, 1)
-  label.position.set(room.labelSpot.x, LABEL_ELEVATION, room.labelSpot.z)
-  label.renderOrder = 2
-  scene.add(label)
+
+const makeGroundGlowTexture = (): Option.Option<CanvasTexture> =>
+  Option.map(
+    drawCanvas(HALO_TEXTURE_PX, HALO_TEXTURE_PX, context => {
+      const middle = HALO_TEXTURE_PX / 2
+      const gradient = context.createRadialGradient(
+        middle,
+        middle,
+        0,
+        middle,
+        middle,
+        middle,
+      )
+      gradient.addColorStop(0, 'rgba(255,255,255,0.6)')
+      gradient.addColorStop(0.45, 'rgba(255,255,255,0.32)')
+      gradient.addColorStop(1, 'rgba(255,255,255,0)')
+      context.fillStyle = gradient
+      context.fillRect(0, 0, HALO_TEXTURE_PX, HALO_TEXTURE_PX)
+    }),
+    texture => {
+      texture.colorSpace = SRGBColorSpace
+      return texture
+    },
+  )
+
+const CONTACT_WIDTH = HOUSE_WIDTH + CONTACT_MARGIN * 2
+const CONTACT_DEPTH = HOUSE_DEPTH + CONTACT_MARGIN * 2
+
+const contactPixelX = (x: number): number =>
+  ((x + CONTACT_MARGIN) / CONTACT_WIDTH) * CONTACT_TEXTURE_PX
+
+const contactPixelZ = (z: number): number =>
+  ((z + CONTACT_MARGIN) / CONTACT_DEPTH) * CONTACT_TEXTURE_PX
+
+const isGroundedFurniture = (piece: Furniture): boolean =>
+  piece.elevation <= CONTACT_FLOOR_REACH && piece.height > CONTACT_FLAT_HEIGHT
+
+const drawFurnitureContact = (
+  context: CanvasRenderingContext2D,
+  piece: Furniture,
+): void => {
+  context.fillRect(
+    contactPixelX(piece.x) - OFFSCREEN_SHIFT_PX,
+    contactPixelZ(piece.z),
+    (piece.width / CONTACT_WIDTH) * CONTACT_TEXTURE_PX,
+    (piece.depth / CONTACT_DEPTH) * CONTACT_TEXTURE_PX,
+  )
 }
+
+const drawWallContact = (
+  context: CanvasRenderingContext2D,
+  room: RoomArea,
+  side: WallSide,
+  from: number,
+  to: number,
+): void => {
+  const isAlongX = side === 'North' || side === 'South'
+  const fixed = Match.value(side).pipe(
+    Match.when('North', () => room.z),
+    Match.when('South', () => room.z + room.depth),
+    Match.when('West', () => room.x),
+    Match.when('East', () => room.x + room.width),
+    Match.exhaustive,
+  )
+  context.beginPath()
+  context.moveTo(
+    (isAlongX ? contactPixelX(from) : contactPixelX(fixed)) -
+      OFFSCREEN_SHIFT_PX,
+    isAlongX ? contactPixelZ(fixed) : contactPixelZ(from),
+  )
+  context.lineTo(
+    (isAlongX ? contactPixelX(to) : contactPixelX(fixed)) - OFFSCREEN_SHIFT_PX,
+    isAlongX ? contactPixelZ(fixed) : contactPixelZ(to),
+  )
+  context.stroke()
+}
+
+// NOTE: Safari has no canvas filter property, so the blur comes from a shadow
+// cast by shapes drawn just off the canvas.
+const makeContactShadows = (): Option.Option<CanvasTexture> =>
+  Option.map(
+    drawCanvas(CONTACT_TEXTURE_PX, CONTACT_TEXTURE_PX, context => {
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, CONTACT_TEXTURE_PX, CONTACT_TEXTURE_PX)
+      context.shadowOffsetX = OFFSCREEN_SHIFT_PX
+      context.shadowColor = CONTACT_SHADE
+      context.shadowBlur = CONTACT_BLUR_PX
+      context.fillStyle = '#000000'
+      Array.forEach(ROOMS, room => {
+        Array.forEach(
+          Array.filter(room.furniture, isGroundedFurniture),
+          piece => {
+            drawFurnitureContact(context, piece)
+          },
+        )
+      })
+      context.shadowColor = CONTACT_WALL_SHADE
+      context.shadowBlur = CONTACT_WALL_BLUR_PX
+      context.strokeStyle = '#000000'
+      context.lineWidth = CONTACT_WALL_WIDTH_PX
+      Array.forEach(Array.flatMap(ROOMS, roomAreas), area => {
+        roomWalls(area, (wallArea, side, from, to) => {
+          drawWallContact(context, wallArea, side, from, to)
+        })
+      })
+    }),
+    texture => {
+      texture.colorSpace = NoColorSpace
+      texture.minFilter = LinearFilter
+      texture.magFilter = LinearFilter
+      texture.generateMipmaps = false
+      texture.flipY = false
+      return texture
+    },
+  )
 
 const disposeObject = (scene: Scene): void => {
   const disposeMaterial = (material: Material & { map?: unknown }): void => {
@@ -500,19 +785,141 @@ const disposeObject = (scene: Scene): void => {
   })
 }
 
-const stepToward = (current: number, target: number): number =>
+const stepToward = (current: number, target: number, amount: number): number =>
   Math.abs(target - current) < FADE_EPSILON
     ? target
-    : current + (target - current) * FADE_RATE
+    : current + (target - current) * amount
+
+const focusRoomId = (
+  focus: HouseFocus,
+  bulbs: ReadonlyArray<HouseBulb>,
+): Option.Option<RoomId> =>
+  HouseFocus.match(focus, {
+    Overview: () => Option.none(),
+    Scenes: () => Option.none(),
+    Room: ({ roomId }) => Option.some(roomId),
+    Bulb: ({ name }) =>
+      Option.map(
+        Array.findFirst(bulbs, bulb => bulb.name === name),
+        bulb => bulb.roomId,
+      ),
+  })
+
+const WHOLE_HOUSE: Bounds = {
+  minX: 0,
+  maxX: HOUSE_WIDTH,
+  minZ: 0,
+  maxZ: HOUSE_DEPTH,
+  height: WALL_HEIGHT * 0.7,
+}
+
+const boundsOfRoom = (room: HouseRoom): Bounds => ({
+  minX: room.x - ROOM_FRAME_MARGIN,
+  maxX: room.x + room.width + ROOM_FRAME_MARGIN,
+  minZ: room.z - ROOM_FRAME_MARGIN,
+  maxZ: room.z + room.depth + ROOM_FRAME_MARGIN,
+  height: ROOM_FRAME_HEIGHT,
+})
+
+const boundsCenter = (bounds: Bounds): Vector3 =>
+  new Vector3(
+    (bounds.minX + bounds.maxX) / 2,
+    HOUSE_CENTER_HEIGHT,
+    (bounds.minZ + bounds.maxZ) / 2,
+  )
+
+const boundsCorners = (bounds: Bounds): ReadonlyArray<Vector3> =>
+  Array.flatMap([0, bounds.height], y =>
+    Array.flatMap([bounds.minX, bounds.maxX], x =>
+      Array.map([bounds.minZ, bounds.maxZ], z => new Vector3(x, y, z)),
+    ),
+  )
+
+// NOTE: Solves for the closest camera distance that keeps every corner inside
+// the part of the screen no panel or button covers.
+const fittingDistance = (
+  bounds: Bounds,
+  target: Vector3,
+  polar: number,
+  azimuth: number,
+  width: number,
+  height: number,
+  insets: Insets,
+): number => {
+  const toCamera = new Vector3().setFromSphericalCoords(1, polar, azimuth)
+  const right = new Vector3()
+    .crossVectors(toCamera.clone().negate(), new Vector3(0, 1, 0))
+    .normalize()
+  const up = new Vector3().crossVectors(right, toCamera.clone().negate())
+  const halfTangent = Math.tan((FIELD_OF_VIEW * Math.PI) / 360)
+  const safeWidth = Math.max(1, width - insets.right - VIEW_EDGE_MARGIN_PX * 2)
+  const safeHeight = Math.max(1, height - insets.top - insets.bottom)
+  const tangentX = halfTangent * (safeWidth / height)
+  const tangentY = halfTangent * (safeHeight / height)
+  return Array.reduce(boundsCorners(bounds), 1, (distance, corner) => {
+    const relative = corner.clone().sub(target)
+    const along = relative.dot(toCamera)
+    return Math.max(
+      distance,
+      along + Math.abs(relative.dot(right)) / tangentX,
+      along + Math.abs(relative.dot(up)) / tangentY,
+    )
+  })
+}
+
+type PlacedAnchor = Readonly<{
+  element: HTMLElement
+  x: number
+  y: number
+  halfWidth: number
+  halfHeight: number
+}>
+
+type SpreadAnchor = PlacedAnchor & Readonly<{ push: number }>
+
+const byAnchorX = Order.mapInput(
+  Order.Number,
+  (anchor: PlacedAnchor) => anchor.x,
+)
+
+// NOTE: Two fixtures can sit close enough that their labels collide at this
+// zoom, so each pair shares the distance needed to clear each other.
+const spreadApart = (
+  anchors: ReadonlyArray<PlacedAnchor>,
+): ReadonlyArray<SpreadAnchor> => {
+  const sorted = Array.sort(anchors, byAnchorX)
+  return Array.map(sorted, (anchor, index) => {
+    const overlapWith = (other: PlacedAnchor): number => {
+      const gap =
+        Math.abs(anchor.x - other.x) -
+        (anchor.halfWidth + other.halfWidth + ANCHOR_GAP_PX)
+      const sharesRow =
+        Math.abs(anchor.y - other.y) < anchor.halfHeight + other.halfHeight
+      return sharesRow && gap < 0 ? -gap / 2 : 0
+    }
+    const push =
+      Option.match(Array.get(sorted, index + 1), {
+        onNone: () => 0,
+        onSome: next => -overlapWith(next),
+      }) +
+      Option.match(Array.get(sorted, index - 1), {
+        onNone: () => 0,
+        onSome: previous => overlapWith(previous),
+      })
+    return { ...anchor, push }
+  })
+}
 
 export const createHouseScene = (
   host: HTMLElement,
+  anchorRoot: HTMLElement,
   callbacks: HouseSceneCallbacks,
 ): HouseScene => {
   const renderer = new WebGLRenderer({ antialias: true, alpha: true })
   renderer.setPixelRatio(
     Math.min(window.devicePixelRatio, MAX_DEVICE_PIXEL_RATIO),
   )
+  renderer.localClippingEnabled = true
   const canvas = renderer.domElement
   canvas.style.display = 'block'
   canvas.style.width = '100%'
@@ -526,22 +933,104 @@ export const createHouseScene = (
     CAMERA_NEAR,
     CAMERA_FAR,
   )
-  const center = new Vector3(HOUSE_WIDTH / 2, 0.4, HOUSE_DEPTH / 2)
   const controls = new OrbitControls(camera, canvas)
-  controls.target.copy(center)
   controls.enablePan = false
   controls.enableDamping = true
   controls.dampingFactor = ROTATE_DAMPING
   controls.minPolarAngle = MIN_POLAR_ANGLE
   controls.maxPolarAngle = MAX_POLAR_ANGLE
 
-  const rooms = Array.map(ROOMS, room => makeRoomVisual(room, scene))
-  addHouseShell(scene)
-  Array.forEach(ROOMS, room => {
-    addRoomLabel(room, scene)
+  const geometry = houseGeometry()
+  const bulbPositions = Array.makeBy(BULB_SLOTS, () => new Vector3())
+  const bulbColors = Array.makeBy(BULB_SLOTS, () => new Vector3())
+  const bulbSpaces = Array.makeBy(BULB_SLOTS, () => 0)
+  const maybeContactShadows = makeContactShadows()
+
+  const emptyShadowTarget = new WebGLCubeRenderTarget(1)
+  const emptyShadowCamera = new CubeCamera(0.1, 1, emptyShadowTarget)
+  const shadowTargets = Array.makeBy(BULB_SLOTS, () => {
+    const target = new WebGLCubeRenderTarget(SHADOW_MAP_PX, {
+      minFilter: NearestFilter,
+      magFilter: NearestFilter,
+      generateMipmaps: false,
+    })
+    return { target, camera: new CubeCamera(SHADOW_NEAR, SHADOW_RANGE, target) }
   })
+  const shadowMaps: Array<WebGLCubeRenderTarget['texture']> = Array.makeBy(
+    BULB_SLOTS,
+    () => emptyShadowTarget.texture,
+  )
+
+  const uniforms = {
+    bulbPositions: { value: bulbPositions },
+    bulbColors: { value: bulbColors },
+    bulbSpaces: { value: bulbSpaces },
+    shadowMaps: { value: shadowMaps },
+    bulbCount: { value: 0 },
+    shadowTaps: { value: SHADOW_TAPS_AT_REST },
+    focusRoom: { value: -1 },
+    focusMix: { value: 0 },
+    contactShadows: {
+      value: Option.getOrNull(maybeContactShadows),
+    },
+    cutX: { value: new Vector2(0, 1) },
+    cutZ: { value: new Vector2(0, 1) },
+    contactArea: {
+      value: new Vector4(
+        -CONTACT_MARGIN,
+        -CONTACT_MARGIN,
+        CONTACT_WIDTH,
+        CONTACT_DEPTH,
+      ),
+    },
+  }
+  const houseMaterial = new ShaderMaterial({
+    side: FrontSide,
+    vertexShader: HOUSE_VERTEX_SHADER,
+    fragmentShader: HOUSE_FRAGMENT_SHADER,
+    uniforms,
+  })
+  const houseMesh = new Mesh(geometry, houseMaterial)
+  scene.add(houseMesh)
+  const cutPlaneX = new Plane(new Vector3(-1, 0, 0), CUT_OPEN_DISTANCE)
+  const cutPlaneZ = new Plane(new Vector3(0, 0, -1), CUT_OPEN_DISTANCE)
+  const capMaterial = addHouseShell(scene, [cutPlaneX, cutPlaneZ])
+  const capColor = new Color(WALL_CAP_HEX)
+
+  const shadowUniforms = { lightPosition: { value: new Vector3() } }
+  const shadowScene = new Scene()
+  shadowScene.add(
+    new Mesh(
+      geometry,
+      new ShaderMaterial({
+        side: DoubleSide,
+        vertexShader: SHADOW_VERTEX_SHADER,
+        fragmentShader: SHADOW_FRAGMENT_SHADER,
+        uniforms: shadowUniforms,
+      }),
+    ),
+  )
 
   const maybeHaloTexture = makeHaloTexture()
+  const maybeGroundGlowTexture = makeGroundGlowTexture()
+  const groundGlowMaterial = new MeshBasicMaterial({
+    ...Option.match(maybeGroundGlowTexture, {
+      onNone: () => ({}),
+      onSome: map => ({ map }),
+    }),
+    blending: AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: 1,
+    color: 0x000000,
+  })
+  const groundGlow = new Mesh(
+    new PlaneGeometry(GROUND_GLOW_SIZE, GROUND_GLOW_SIZE).rotateX(-Math.PI / 2),
+    groundGlowMaterial,
+  )
+  groundGlow.position.set(HOUSE_WIDTH / 2, GROUND_GLOW_HEIGHT, HOUSE_DEPTH / 2)
+  groundGlow.renderOrder = -1
+  scene.add(groundGlow)
   const orbGeometry = new SphereGeometry(ORB_RADIUS, 20, 14)
   const poleGeometry = new CylinderGeometry(
     POLE_RADIUS,
@@ -551,26 +1040,227 @@ export const createHouseScene = (
   ).translate(0, -0.5, 0)
   const poleMaterial = new MeshBasicMaterial({ color: POLE_HEX })
 
-  const selectionRing = new Mesh(
-    new RingGeometry(RING_INNER, RING_OUTER, 48).rotateX(-Math.PI / 2),
-    new MeshBasicMaterial({
-      color: SELECTION_HEX,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-    }),
-  )
-  selectionRing.visible = false
-  selectionRing.renderOrder = 1
-  scene.add(selectionRing)
-
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+  const wideLayout = window.matchMedia(WIDE_LAYOUT_QUERY)
   const visuals = new Map<string, BulbVisual>()
   const offColor = new Color(OFF_BULB_HEX)
-  const frame = { isScheduled: false, id: 0 }
-  const framing = { hasFramed: false }
-  const pick = { maybeStart: Option.none<TapStart>() }
-  const currentSelection: { value: HouseSelection } = {
-    value: HouseSelection.Nothing(),
+  const projected = new Vector3()
+  const state: {
+    isFrameScheduled: boolean
+    frameId: number
+    isPanelMeasureScheduled: boolean
+    panelMeasureId: number
+    lastFrameAt: number
+    bakedPositions: string
+    sizedWidth: number
+    sizedHeight: number
+    hasFramed: boolean
+    maybeFlight: Option.Option<Flight>
+    flightStartedAt: number
+    maybePick: Option.Option<TapStart>
+    focus: HouseFocus
+    focusRoomId: Option.Option<RoomId>
+    cutBounds: Bounds
+    bulbs: ReadonlyArray<HouseBulb>
+    offsetX: number
+    offsetY: number
+  } = {
+    isFrameScheduled: false,
+    frameId: 0,
+    isPanelMeasureScheduled: false,
+    panelMeasureId: 0,
+    lastFrameAt: 0,
+    bakedPositions: '',
+    sizedWidth: 0,
+    sizedHeight: 0,
+    hasFramed: false,
+    maybeFlight: Option.none(),
+    flightStartedAt: 0,
+    maybePick: Option.none(),
+    focus: HouseFocus.Overview(),
+    focusRoomId: Option.none(),
+    cutBounds: WHOLE_HOUSE,
+    bulbs: [],
+    offsetX: 0,
+    offsetY: 0,
+  }
+  const allVisuals = (): ReadonlyArray<BulbVisual> =>
+    globalThis.Array.from(visuals.values())
+
+  const applyOffset = (offsetX: number, offsetY: number): void => {
+    const width = host.clientWidth
+    const height = host.clientHeight
+    state.offsetX = offsetX
+    state.offsetY = offsetY
+    camera.setViewOffset(width, height, offsetX, offsetY, width, height)
+  }
+
+  const applyPose = (pose: CameraPose): void => {
+    controls.target.copy(pose.target)
+    camera.position
+      .setFromSphericalCoords(pose.distance, pose.polar, pose.azimuth)
+      .add(pose.target)
+    camera.lookAt(pose.target)
+    applyOffset(pose.offsetX, pose.offsetY)
+  }
+
+  const currentPose = (): CameraPose => ({
+    target: controls.target.clone(),
+    distance: camera.position.distanceTo(controls.target),
+    polar: controls.getPolarAngle(),
+    azimuth: controls.getAzimuthalAngle(),
+    offsetX: state.offsetX,
+    offsetY: state.offsetY,
+  })
+
+  const panelInsets = (): Insets => {
+    const panel = document.querySelector<HTMLElement>(PANEL_SELECTOR)
+    if (panel === null) {
+      return {
+        top: OVERVIEW_TOP_INSET_PX,
+        right: 0,
+        bottom: OVERVIEW_BOTTOM_INSET_PX,
+      }
+    }
+    return wideLayout.matches
+      ? {
+          top: ROOM_TOP_INSET_PX,
+          right: panel.offsetWidth + SIDE_PANEL_GAP_PX * 2,
+          bottom: VIEW_EDGE_MARGIN_PX,
+        }
+      : { top: ROOM_TOP_INSET_PX, right: 0, bottom: panel.offsetHeight }
+  }
+
+  const poseForFocus = (azimuth: number): CameraPose => {
+    const width = host.clientWidth
+    const height = host.clientHeight
+    const insets = panelInsets()
+    const maybeRoom = Option.flatMap(state.focusRoomId, roomById)
+    const bounds = Option.match(maybeRoom, {
+      onNone: () => WHOLE_HOUSE,
+      onSome: boundsOfRoom,
+    })
+    const polar = Option.isSome(maybeRoom) ? ROOM_POLAR : OVERVIEW_POLAR
+    const target = boundsCenter(bounds)
+    return {
+      target,
+      polar,
+      azimuth,
+      distance: fittingDistance(
+        bounds,
+        target,
+        polar,
+        azimuth,
+        width,
+        height,
+        insets,
+      ),
+      offsetX: insets.right / 2,
+      offsetY: (insets.bottom - insets.top) / 2,
+    }
+  }
+
+  const setZoomLimits = (distance: number): void => {
+    const isInRoom = Option.isSome(state.focusRoomId)
+    controls.minDistance =
+      distance * (isInRoom ? ROOM_MIN_ZOOM : OVERVIEW_MIN_ZOOM)
+    controls.maxDistance =
+      distance * (isInRoom ? ROOM_MAX_ZOOM : OVERVIEW_MAX_ZOOM)
+  }
+
+  const startFlight = (
+    from: CameraPose,
+    to: CameraPose,
+    durationMs: number,
+  ): void => {
+    if (reducedMotion.matches) {
+      applyPose(to)
+      setZoomLimits(to.distance)
+      requestFrame()
+      return
+    }
+    controls.minDistance = 0
+    controls.maxDistance = Number.POSITIVE_INFINITY
+    controls.enabled = false
+    state.flightStartedAt = 0
+    state.maybeFlight = Option.some({ from, to, durationMs })
+    requestFrame()
+  }
+
+  const endFlight = (flight: Flight): void => {
+    state.maybeFlight = Option.none()
+    controls.enabled = true
+    setZoomLimits(flight.to.distance)
+  }
+
+  const advanceFlight = (now: number): boolean =>
+    Option.match(state.maybeFlight, {
+      onNone: () => false,
+      onSome: flight => {
+        state.flightStartedAt =
+          state.flightStartedAt === 0 ? now : state.flightStartedAt
+        const progress = Math.min(
+          1,
+          (now - state.flightStartedAt) / flight.durationMs,
+        )
+        const eased = easeInOutCubic(progress)
+        const { from, to } = flight
+        applyPose({
+          target: from.target.clone().lerp(to.target, eased),
+          distance: mix(from.distance, to.distance, eased),
+          polar: mix(from.polar, to.polar, eased),
+          azimuth:
+            from.azimuth + shortestAngle(from.azimuth, to.azimuth) * eased,
+          offsetX: mix(from.offsetX, to.offsetX, eased),
+          offsetY: mix(from.offsetY, to.offsetY, eased),
+        })
+        if (progress >= 1) {
+          endFlight(flight)
+          return false
+        }
+        return true
+      },
+    })
+
+  const flyToFocus = (): void => {
+    const from = currentPose()
+    startFlight(from, poseForFocus(from.azimuth), FLIGHT_MS)
+  }
+
+  const scheduleFlightAfterLayout = (): void => {
+    if (!state.isPanelMeasureScheduled) {
+      state.isPanelMeasureScheduled = true
+      state.panelMeasureId = requestAnimationFrame(() => {
+        state.isPanelMeasureScheduled = false
+        flyToFocus()
+      })
+    }
+  }
+
+  const bakeShadows = (): void => {
+    const paired = Array.zip(shadowTargets, allVisuals())
+    const positions = Array.join(
+      Array.map(paired, ([, visual]) => visual.root.position.toArray().join()),
+      ';',
+    )
+    if (positions === state.bakedPositions) {
+      return
+    }
+    state.bakedPositions = positions
+    const previousColor = renderer.getClearColor(new Color()).getHex()
+    const previousAlpha = renderer.getClearAlpha()
+    renderer.setClearColor(0xffffff, 1)
+    emptyShadowCamera.update(renderer, new Scene())
+    Array.forEach(paired, ([slot, visual], index) => {
+      shadowUniforms.lightPosition.value.copy(visual.root.position)
+      slot.camera.position.copy(visual.root.position)
+      slot.camera.update(renderer, shadowScene)
+      shadowMaps[index] = slot.target.texture
+    })
+    renderer.setClearColor(previousColor, previousAlpha)
+    Array.forEach(Array.drop(shadowMaps, paired.length), (_, index) => {
+      shadowMaps[paired.length + index] = emptyShadowTarget.texture
+    })
   }
 
   const makeVisual = (bulb: HouseBulb): BulbVisual => {
@@ -636,12 +1326,12 @@ export const createHouseScene = (
     halo.scale.set(scale, scale, 1)
   }
 
-  const fadeVisual = (visual: BulbVisual): boolean => {
+  const fadeVisual = (visual: BulbVisual, amount: number): boolean => {
     const { currentColor, targetColor, bulb } = visual
-    const nextRed = stepToward(currentColor.r, targetColor.r)
-    const nextGreen = stepToward(currentColor.g, targetColor.g)
-    const nextBlue = stepToward(currentColor.b, targetColor.b)
-    const nextLevel = stepToward(visual.currentLevel, bulb.level)
+    const nextRed = stepToward(currentColor.r, targetColor.r, amount)
+    const nextGreen = stepToward(currentColor.g, targetColor.g, amount)
+    const nextBlue = stepToward(currentColor.b, targetColor.b, amount)
+    const nextLevel = stepToward(visual.currentLevel, bulb.level, amount)
     const isFading =
       nextRed !== targetColor.r ||
       nextGreen !== targetColor.g ||
@@ -653,92 +1343,213 @@ export const createHouseScene = (
     return isFading
   }
 
-  const applyRoomLights = (): void => {
-    Array.forEach(rooms, room => {
-      const roomVisuals = Array.filter(
-        globalThis.Array.from(visuals.values()),
-        visual => sharesLight(visual.bulb.roomId, room.id),
+  const applyBulbLights = (): void => {
+    const paired = Array.zip(bulbPositions, allVisuals())
+    Array.forEach(paired, ([position, visual], index) => {
+      position.copy(visual.root.position)
+      const strength = visual.currentLevel ** LEVEL_BLOOM_POWER * LIGHT_STRENGTH
+      bulbColors[index]?.set(
+        visual.currentColor.r * strength,
+        visual.currentColor.g * strength,
+        visual.currentColor.b * strength,
       )
-      const paired = Array.zip(room.slots, roomVisuals)
-      Array.forEach(paired, ([slot, visual]) => {
-        slot.position.copy(visual.root.position)
-        const strength = visual.currentLevel * LIGHT_STRENGTH
-        slot.color.set(
-          visual.currentColor.r * strength,
-          visual.currentColor.g * strength,
-          visual.currentColor.b * strength,
-        )
-      })
-      room.bulbCount.value = paired.length
-    })
-  }
-
-  const applySelection = (): void => {
-    const selected = currentSelection.value
-    const maybeBulb = HouseSelection.match(selected, {
-      Nothing: () => Option.none<BulbVisual>(),
-      Room: () => Option.none<BulbVisual>(),
-      Bulb: ({ name }) => Option.fromNullishOr(visuals.get(name)),
-    })
-    selectionRing.visible = Option.isSome(maybeBulb)
-    if (Option.isSome(maybeBulb)) {
-      const { x, z } = maybeBulb.value.bulb
-      selectionRing.position.set(x, RING_ELEVATION, z)
-    }
-    Array.forEach(rooms, room => {
-      room.highlight.value = HouseSelection.match(selected, {
-        Nothing: () => 0,
-        Bulb: () => 0,
-        Room: ({ roomId }) => (roomId === room.id ? 1 : 0),
+      bulbSpaces[index] = Option.match(roomById(visual.bulb.roomId), {
+        onNone: () => 0,
+        onSome: lightSpaceOf,
       })
     })
-  }
-
-  const renderFrame = (): void => {
-    frame.isScheduled = false
-    const isMoving = controls.update()
-    const isFading = Array.reduce(
-      globalThis.Array.from(visuals.values()),
-      false,
-      (anyFading, visual) => fadeVisual(visual) || anyFading,
+    uniforms.bulbCount.value = paired.length
+    const sharedColor = Array.reduce(
+      paired,
+      new Color(0x000000),
+      (sum, [, visual]) =>
+        sum.add(
+          visual.currentColor.clone().multiplyScalar(visual.currentLevel),
+        ),
     )
-    applyRoomLights()
+    const averageLevel =
+      Array.reduce(paired, 0, (sum, [, visual]) => sum + visual.currentLevel) /
+      Math.max(1, paired.length)
+    capMaterial.color
+      .copy(capColor)
+      .multiplyScalar(mix(CAP_UNLIT_SHADE, 1, Math.min(1, averageLevel * 1.6)))
+    groundGlowMaterial.color
+      .copy(sharedColor)
+      .multiplyScalar(GROUND_GLOW_STRENGTH / Math.max(1, paired.length))
+  }
+
+  const applyFocusFade = (dt: number): boolean => {
+    const targetMix = Option.isSome(state.focusRoomId) ? 1 : 0
+    const amount = 1 - Math.exp(-dt / FOCUS_FADE_MS)
+    uniforms.focusMix.value = stepToward(
+      uniforms.focusMix.value,
+      targetMix,
+      amount,
+    )
+    Option.match(state.focusRoomId, {
+      onNone: () => undefined,
+      onSome: roomId => {
+        uniforms.focusRoom.value = roomIndexOf(roomId)
+      },
+    })
+    return uniforms.focusMix.value !== targetMix
+  }
+
+  // NOTE: Backface culling only hides the focused room's own near walls. The
+  // rooms beyond them are cut away along those walls' lines, so the wall of the
+  // next room over can't stand in front of the one being controlled. A side is
+  // cut only when the camera really is on that side.
+  const applyCut = (): void => {
+    Option.map(Option.flatMap(state.focusRoomId, roomById), room => {
+      state.cutBounds = boundsOfRoom(room)
+    })
+    const azimuth = controls.getAzimuthalAngle()
+    const towardX = Math.sin(azimuth)
+    const towardZ = Math.cos(azimuth)
+    const open = (1 - uniforms.focusMix.value ** 2) * CUT_OPEN_DISTANCE
+    const margin = ROOM_FRAME_MARGIN
+    const signX =
+      Math.abs(towardX) > CUT_FACING_THRESHOLD ? Math.sign(towardX) : 0
+    const signZ =
+      Math.abs(towardZ) > CUT_FACING_THRESHOLD ? Math.sign(towardZ) : 0
+    const edgeX =
+      signX > 0 ? state.cutBounds.maxX - margin : state.cutBounds.minX + margin
+    const edgeZ =
+      signZ > 0 ? state.cutBounds.maxZ - margin : state.cutBounds.minZ + margin
+    const limitX = signX === 0 ? 1 : signX * edgeX - CUT_INSET + open
+    const limitZ = signZ === 0 ? 1 : signZ * edgeZ - CUT_INSET + open
+    uniforms.cutX.value.set(signX, limitX)
+    uniforms.cutZ.value.set(signZ, limitZ)
+    cutPlaneX.normal.set(-signX, 0, 0)
+    cutPlaneX.constant = signX === 0 ? 1 : limitX + CUT_INSET + CUT_SHELL_MARGIN
+    cutPlaneZ.normal.set(0, 0, -signZ)
+    cutPlaneZ.constant = signZ === 0 ? 1 : limitZ + CUT_INSET + CUT_SHELL_MARGIN
+    Array.forEach(allVisuals(), visual => {
+      const isFocusedRoom = Option.exists(
+        state.focusRoomId,
+        roomId => roomId === visual.bulb.roomId,
+      )
+      visual.root.visible =
+        isFocusedRoom ||
+        (signX * visual.root.position.x <= limitX &&
+          signZ * visual.root.position.z <= limitZ)
+      visual.halo.material.opacity *= isFocusedRoom
+        ? 1
+        : 1 - uniforms.focusMix.value * (1 - OUT_OF_FOCUS_HALO)
+    })
+  }
+
+  const placeAnchors = (): void => {
+    const width = host.clientWidth
+    const height = host.clientHeight
+    const placed = Array.map(
+      globalThis.Array.from(
+        anchorRoot.querySelectorAll<HTMLElement>('[data-anchor]'),
+      ),
+      element => {
+        const { anchorX, anchorY, anchorZ } = element.dataset
+        projected
+          .set(Number(anchorX ?? 0), Number(anchorY ?? 0), Number(anchorZ ?? 0))
+          .project(camera)
+        return {
+          element,
+          x: ((projected.x + 1) / 2) * width,
+          y: ((1 - projected.y) / 2) * height,
+          halfWidth: element.offsetWidth / 2,
+          halfHeight: element.offsetHeight / 2,
+        }
+      },
+    )
+    const spread = spreadApart(placed)
+    Array.forEach(spread, anchor => {
+      const edgeX = anchor.halfWidth + ANCHOR_EDGE_MARGIN_PX
+      const edgeY = anchor.halfHeight + ANCHOR_EDGE_MARGIN_PX
+      const x = Math.min(
+        Math.max(anchor.x, edgeX),
+        Math.max(edgeX, width - edgeX),
+      )
+      const y = Math.min(
+        Math.max(anchor.y, edgeY),
+        Math.max(edgeY, height - edgeY),
+      )
+      anchor.element.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -50%)`
+      anchor.element.style.setProperty(
+        '--spread-x',
+        `${anchor.push.toFixed(1)}px`,
+      )
+      anchor.element.dataset['placed'] = ''
+    })
+  }
+
+  const renderFrame = (now: number): void => {
+    state.isFrameScheduled = false
+    const dt = Math.min(
+      MAX_FRAME_STEP_MS,
+      state.lastFrameAt === 0 ? 16 : now - state.lastFrameAt,
+    )
+    state.lastFrameAt = now
+    const isFlying = advanceFlight(now)
+    const isMoving = isFlying ? false : controls.update()
+    const fadeAmount = 1 - Math.exp(-dt / FADE_MS)
+    const isFading = Array.reduce(
+      allVisuals(),
+      false,
+      (anyFading, visual) => fadeVisual(visual, fadeAmount) || anyFading,
+    )
+    const isFocusFading = applyFocusFade(dt)
+    applyCut()
+    applyBulbLights()
+    bakeShadows()
+    uniforms.shadowTaps.value =
+      isFlying || isMoving ? SHADOW_TAPS_IN_MOTION : SHADOW_TAPS_AT_REST
+    renderer.setRenderTarget(null)
     renderer.render(scene, camera)
-    if (isMoving || isFading) {
+    placeAnchors()
+    if (isFlying || isMoving || isFading || isFocusFading) {
       requestFrame()
+    } else {
+      state.lastFrameAt = 0
     }
   }
 
   const requestFrame = (): void => {
-    if (!frame.isScheduled) {
-      frame.isScheduled = true
-      frame.id = requestAnimationFrame(renderFrame)
+    if (!state.isFrameScheduled) {
+      state.isFrameScheduled = true
+      state.frameId = requestAnimationFrame(renderFrame)
     }
   }
 
   const frameHouse = (width: number, height: number): void => {
     camera.aspect = width / height
     camera.updateProjectionMatrix()
-    const verticalHalf = (FIELD_OF_VIEW * Math.PI) / 360
-    const horizontalHalf = Math.atan(Math.tan(verticalHalf) * camera.aspect)
-    const reach = Math.hypot(HOUSE_WIDTH, HOUSE_DEPTH) / 2
-    const distance =
-      (reach * FRAMING_MARGIN) /
-      Math.sin(Math.min(verticalHalf, horizontalHalf))
-    controls.minDistance = distance * MIN_ZOOM
-    controls.maxDistance = distance * MAX_ZOOM
-    if (!framing.hasFramed) {
-      framing.hasFramed = true
-      camera.position
-        .setFromSphericalCoords(distance, INITIAL_POLAR_ANGLE, INITIAL_AZIMUTH)
-        .add(center)
+    if (!state.hasFramed) {
+      state.hasFramed = true
+      const settled = poseForFocus(OVERVIEW_AZIMUTH)
+      setZoomLimits(settled.distance)
+      applyPose({
+        ...settled,
+        distance: settled.distance * INTRO_DISTANCE_FACTOR,
+        polar: INTRO_POLAR,
+        azimuth: OVERVIEW_AZIMUTH + INTRO_AZIMUTH_OFFSET,
+      })
+      startFlight(currentPose(), settled, INTRO_MS)
+      return
     }
+    state.maybeFlight = Option.none()
+    controls.enabled = true
+    const pose = poseForFocus(controls.getAzimuthalAngle())
+    setZoomLimits(pose.distance)
+    applyPose(pose)
   }
 
   const resize = (): void => {
     const width = host.clientWidth
     const height = host.clientHeight
-    if (width > 0 && height > 0) {
+    const isSameSize =
+      width === state.sizedWidth && height === state.sizedHeight
+    if (width > 0 && height > 0 && !isSameSize) {
+      state.sizedWidth = width
+      state.sizedHeight = height
       renderer.setSize(width, height, false)
       frameHouse(width, height)
       requestFrame()
@@ -746,17 +1557,26 @@ export const createHouseScene = (
   }
 
   const screenPoints = (width: number, height: number) =>
-    Array.map(globalThis.Array.from(visuals.values()), visual => {
-      const projected = visual.root.position.clone().project(camera)
+    Array.map(allVisuals(), visual => {
+      const point = visual.root.position.clone().project(camera)
       return {
         name: visual.bulb.name,
-        x: ((projected.x + 1) / 2) * width,
-        y: ((1 - projected.y) / 2) * height,
+        x: ((point.x + 1) / 2) * width,
+        y: ((1 - point.y) / 2) * height,
       }
     })
 
-  const floorPlane = new Plane(new Vector3(0, 1, 0), 0)
   const raycaster = new Raycaster()
+  const roomIndexAttribute = geometry.getAttribute('roomIndex')
+
+  const roomIndexOfHit = (vertex: number): number =>
+    roomIndexAttribute.getX(vertex)
+
+  const isOutsideCut = (roomIndex: number, point: Vector3): boolean =>
+    uniforms.focusMix.value > 0 &&
+    roomIndex !== uniforms.focusRoom.value &&
+    (uniforms.cutX.value.x * point.x > uniforms.cutX.value.y ||
+      uniforms.cutZ.value.x * point.z > uniforms.cutZ.value.y)
 
   const handleTap = (x: number, y: number): void => {
     const width = canvas.clientWidth
@@ -775,10 +1595,15 @@ export const createHouseScene = (
       new Vector2((x / width) * 2 - 1, 1 - (y / height) * 2),
       camera,
     )
-    const hit = raycaster.ray.intersectPlane(floorPlane, new Vector3())
     const maybeRoom = pipe(
-      Option.fromNullishOr(hit),
-      Option.flatMap(point => roomAt(point.x, point.z)),
+      raycaster.intersectObject(houseMesh),
+      Array.findFirst(hit => {
+        const roomIndex = roomIndexOfHit(hit.face?.a ?? 0)
+        return isOutsideCut(roomIndex, hit.point)
+          ? Option.none()
+          : Option.fromNullishOr(ROOMS[roomIndex])
+      }),
+      Option.map(room => room.id),
     )
     if (Option.isSome(maybeRoom)) {
       callbacks.onPickRoom(maybeRoom.value)
@@ -788,8 +1613,9 @@ export const createHouseScene = (
   }
 
   const handlePointerDown = (event: PointerEvent): void => {
-    pick.maybeStart =
-      event.isPrimary && Option.isNone(pick.maybeStart)
+    Option.map(state.maybeFlight, endFlight)
+    state.maybePick =
+      event.isPrimary && Option.isNone(state.maybePick)
         ? Option.some({
             pointerId: event.pointerId,
             x: event.clientX,
@@ -800,8 +1626,8 @@ export const createHouseScene = (
   }
 
   const handlePointerUp = (event: PointerEvent): void => {
-    const maybeStart = pick.maybeStart
-    pick.maybeStart = Option.none()
+    const maybeStart = state.maybePick
+    state.maybePick = Option.none()
     if (Option.isNone(maybeStart)) {
       return
     }
@@ -818,28 +1644,35 @@ export const createHouseScene = (
   }
 
   const handlePointerCancel = (): void => {
-    pick.maybeStart = Option.none()
+    state.maybePick = Option.none()
   }
 
   const handleContextLost = (event: Event): void => {
     event.preventDefault()
   }
 
+  const handleContextRestored = (): void => {
+    state.bakedPositions = ''
+    requestFrame()
+  }
+
   canvas.addEventListener('pointerdown', handlePointerDown)
   canvas.addEventListener('pointerup', handlePointerUp)
   canvas.addEventListener('pointercancel', handlePointerCancel)
   canvas.addEventListener('webglcontextlost', handleContextLost)
-  canvas.addEventListener('webglcontextrestored', requestFrame)
+  canvas.addEventListener('webglcontextrestored', handleContextRestored)
   controls.addEventListener('change', requestFrame)
 
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(host)
+  const anchorObserver = new MutationObserver(requestFrame)
+  anchorObserver.observe(anchorRoot, { childList: true })
   resize()
 
   return {
     setBulbs: bulbs => {
       const names = new Set(Array.map(bulbs, bulb => bulb.name))
-      Array.forEach(globalThis.Array.from(visuals.values()), visual => {
+      Array.forEach(allVisuals(), visual => {
         if (!names.has(visual.bulb.name)) {
           removeVisual(visual)
         }
@@ -852,28 +1685,51 @@ export const createHouseScene = (
         visual.pole.visible = !bulb.isMounted
         visual.pole.scale.y = bulb.y
       })
-      applySelection()
+      state.bulbs = bulbs
+      const nextRoomId = focusRoomId(state.focus, bulbs)
+      if (
+        Option.getOrNull(state.focusRoomId) !== Option.getOrNull(nextRoomId)
+      ) {
+        state.focusRoomId = nextRoomId
+        scheduleFlightAfterLayout()
+      }
       requestFrame()
     },
 
-    setSelection: selection => {
-      currentSelection.value = selection
-      applySelection()
+    setFocus: focus => {
+      state.focus = focus
+      state.focusRoomId = focusRoomId(focus, state.bulbs)
+      if (state.hasFramed) {
+        scheduleFlightAfterLayout()
+      }
       requestFrame()
     },
 
     dispose: () => {
-      cancelAnimationFrame(frame.id)
+      cancelAnimationFrame(state.frameId)
+      cancelAnimationFrame(state.panelMeasureId)
       resizeObserver.disconnect()
+      anchorObserver.disconnect()
       canvas.removeEventListener('pointerdown', handlePointerDown)
       canvas.removeEventListener('pointerup', handlePointerUp)
       canvas.removeEventListener('pointercancel', handlePointerCancel)
       canvas.removeEventListener('webglcontextlost', handleContextLost)
-      canvas.removeEventListener('webglcontextrestored', requestFrame)
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored)
       controls.removeEventListener('change', requestFrame)
       controls.dispose()
       disposeObject(scene)
+      disposeObject(shadowScene)
+      Array.forEach(shadowTargets, ({ target }) => {
+        target.dispose()
+      })
+      emptyShadowTarget.dispose()
       Option.map(maybeHaloTexture, texture => {
+        texture.dispose()
+      })
+      Option.map(maybeContactShadows, texture => {
+        texture.dispose()
+      })
+      Option.map(maybeGroundGlowTexture, texture => {
         texture.dispose()
       })
       renderer.dispose()

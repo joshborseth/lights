@@ -7,6 +7,7 @@ import {
   type JsonObject,
   type LightStates,
   OFF_FRAME,
+  repaintFrame,
   restoreFrame,
   runFlash,
 } from './flash'
@@ -133,11 +134,67 @@ describe('runFlash', () => {
   test('puts lights back the way they were', async () => {
     const { port, sent } = makePort({ states: { Orb: ON_STATE } })
     await Effect.runPromise(runFlash(port, { ...FLASH, count: 1 }))
-    expect(payloadsFor(sent, 'Orb').at(-1)).toEqual({
+    expect(payloadsFor(sent, 'Orb').slice(2)).toEqual([
+      { state: 'ON', brightness: 120, color_temp: 370 },
+      { color_temp: 370 },
+      { color_temp: 370 },
+    ])
+  })
+
+  test('sends the repeated color only after the bulbs have had time to wake', async () => {
+    const steps: Array<string> = []
+    const { port } = makePort({ states: { Orb: ON_STATE } })
+    const tracingPort: FlashPort<string> = {
+      ...port,
+      publishLight: (name, payload) =>
+        port
+          .publishLight(name, payload)
+          .pipe(Effect.tap(() => Effect.sync(() => steps.push('send')))),
+      sleep: ms => Effect.sync(() => steps.push(`wait ${ms}`)),
+    }
+    await Effect.runPromise(runFlash(tracingPort, { ...FLASH, count: 1 }))
+    expect(steps.slice(-7)).toEqual([
+      'wait 250',
+      'wait 1200',
+      'send',
+      'wait 250',
+      'wait 1200',
+      'send',
+      'wait 250',
+    ])
+  })
+
+  test('does not repeat a color for a light that was off', async () => {
+    const { port, sent } = makePort({
+      states: { Orb: ON_STATE, Shroom: OFF_STATE },
+    })
+    await Effect.runPromise(
+      runFlash(port, { ...FLASH, onlyLightsAlreadyOn: false, count: 1 }),
+    )
+    expect(
+      payloadsFor(sent, 'Shroom').filter(p => p['state'] === undefined),
+    ).toEqual([])
+  })
+
+  test('a bulb that drops the color sent with its power-on still ends up on its own color', async () => {
+    const before: JsonObject = {
       state: 'ON',
       brightness: 120,
-      color_temp: 370,
-    })
+      color_mode: 'xy',
+      color: { x: 0.56, y: 0.4 },
+    }
+    const { port, sent } = makePort({ states: { Orb: before } })
+    await Effect.runPromise(runFlash(port, { ...FLASH, count: 1 }))
+
+    const [flashFrame, ...laterFrames] = payloadsFor(sent, 'Orb')
+    const shownColor = laterFrames.reduce<unknown>(
+      (color, payload) =>
+        payload['state'] === undefined && payload['color'] !== undefined
+          ? payload['color']
+          : color,
+      flashFrame?.['color'],
+    )
+    expect(shownColor).toEqual({ x: 0.56, y: 0.4 })
   })
 
   test('does not restore when turned off in settings', async () => {
@@ -177,7 +234,12 @@ describe('runFlash', () => {
       rainbow: ['Rest of the House'],
     })
     await Effect.runPromise(runFlash(port, { ...FLASH, count: 1 }))
-    expect(payloadsFor(sent, 'Bed').at(-1)).toMatchObject({ state: 'ON' })
+    expect(payloadsFor(sent, 'Bed')).toContainEqual({
+      state: 'ON',
+      brightness: 120,
+      color_temp: 370,
+    })
+    expect(payloadsFor(sent, 'Bed').at(-1)).toEqual({ color_temp: 370 })
     expect(payloadsFor(sent, 'Orb').at(-1)).toEqual(OFF_FRAME)
   })
 
@@ -189,7 +251,11 @@ describe('runFlash', () => {
     })
     const exit = await Effect.runPromiseExit(runFlash(port, FLASH))
     expect(Exit.isFailure(exit)).toBe(true)
-    expect(payloadsFor(sent, 'Orb').at(-1)).toMatchObject({ brightness: 120 })
+    expect(payloadsFor(sent, 'Orb')).toContainEqual({
+      state: 'ON',
+      brightness: 120,
+      color_temp: 370,
+    })
   })
 
   test('restores when interrupted mid-flash', async () => {
@@ -205,7 +271,32 @@ describe('runFlash', () => {
         yield* Fiber.interrupt(fiber)
       }),
     )
-    expect(payloadsFor(sent, 'Orb').at(-1)).toMatchObject({ brightness: 120 })
+    expect(payloadsFor(sent, 'Orb')).toContainEqual({
+      state: 'ON',
+      brightness: 120,
+      color_temp: 370,
+    })
+    expect(payloadsFor(sent, 'Orb').at(-1)).toEqual({ color_temp: 370 })
+  })
+})
+
+describe('repaintFrame', () => {
+  test('carries only the color, with no power or brightness', () => {
+    expect(
+      repaintFrame({
+        state: 'ON',
+        brightness: 10,
+        color_mode: 'xy',
+        color: { x: 0.3, y: 0.4 },
+      }),
+    ).toEqual(Option.some({ color: { x: 0.3, y: 0.4 } }))
+  })
+
+  test('sends nothing for a light that was off or reported no color', () => {
+    expect(repaintFrame({ state: 'OFF', color: { x: 0.3, y: 0.4 } })).toEqual(
+      Option.none(),
+    )
+    expect(repaintFrame({ state: 'ON', brightness: 10 })).toEqual(Option.none())
   })
 })
 

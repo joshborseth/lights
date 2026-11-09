@@ -6,6 +6,8 @@ export const RAINBOW_PRESET = 'Rainbow'
 
 const STOP_LOOP_REPEAT_MS = 400
 const RESTORE_GAP_MS = 250
+const REPAINT_SETTLE_MS = 1200
+const REPAINT_PASSES = 2
 
 export type JsonObject = Readonly<Record<string, unknown>>
 export type LightStates = Readonly<Record<string, JsonObject>>
@@ -43,6 +45,24 @@ export const stopLoopFrame = (flash: FlashConfig): JsonObject => ({
   color: hexToHueSaturation(flash.hex),
 })
 
+const colorFields = (state: JsonObject): JsonObject => {
+  const color = readRecord(state['color'])
+  return state['color_mode'] === 'color_temp' &&
+    state['color_temp'] !== undefined &&
+    state['color_temp'] !== null
+    ? { color_temp: state['color_temp'] }
+    : color !== undefined && color['x'] != null && color['y'] != null
+      ? { color: { x: color['x'], y: color['y'] } }
+      : color !== undefined && color['hue'] != null
+        ? {
+            color: {
+              hue: color['hue'],
+              saturation: color['saturation'] ?? 100,
+            },
+          }
+        : {}
+}
+
 export const restoreFrame = (state: JsonObject): JsonObject => {
   if (`${state['state'] ?? 'OFF'}`.toUpperCase() !== 'ON') {
     return OFF_FRAME
@@ -51,23 +71,17 @@ export const restoreFrame = (state: JsonObject): JsonObject => {
     state['brightness'] === undefined || state['brightness'] === null
       ? {}
       : { brightness: state['brightness'] }
-  const color = readRecord(state['color'])
-  const colorFields: JsonObject =
-    state['color_mode'] === 'color_temp' &&
-    state['color_temp'] !== undefined &&
-    state['color_temp'] !== null
-      ? { color_temp: state['color_temp'] }
-      : color !== undefined && color['x'] != null && color['y'] != null
-        ? { color: { x: color['x'], y: color['y'] } }
-        : color !== undefined && color['hue'] != null
-          ? {
-              color: {
-                hue: color['hue'],
-                saturation: color['saturation'] ?? 100,
-              },
-            }
-          : {}
-  return { state: 'ON', ...brightness, ...colorFields }
+  return { state: 'ON', ...brightness, ...colorFields(state) }
+}
+
+// NOTE: IKEA bulbs can drop a color that arrives while they fade back on, and
+// Zigbee2MQTT still reports the color it sent. Color only, because a bulb that
+// is already on applies it right away.
+export const repaintFrame = (state: JsonObject): Option.Option<JsonObject> => {
+  const fields = colorFields(state)
+  return isLightOn(state) && Object.keys(fields).length > 0
+    ? Option.some(fields)
+    : Option.none()
 }
 
 export const isJsonObject = (value: unknown): value is JsonObject =>
@@ -202,6 +216,32 @@ export const runFlash = <E>(
           }),
         { discard: true },
       )
+      const repaints = Array.getSomes(
+        Array.map(lightsToRestore, name =>
+          Option.map(
+            repaintFrame(before[name] ?? OFF_FRAME),
+            frame => [name, frame] as const,
+          ),
+        ),
+      )
+      if (Array.isReadonlyArrayEmpty(repaints)) {
+        return
+      }
+      const repaintOnce = port
+        .sleep(REPAINT_SETTLE_MS)
+        .pipe(
+          Effect.andThen(
+            Effect.forEach(
+              repaints,
+              ([name, frame]) =>
+                port
+                  .publishLight(name, frame)
+                  .pipe(Effect.andThen(port.sleep(RESTORE_GAP_MS))),
+              { discard: true },
+            ),
+          ),
+        )
+      yield* Effect.repeat(repaintOnce, { times: REPAINT_PASSES - 1 })
     })
 
     yield* stopLoops.pipe(

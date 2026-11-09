@@ -95,6 +95,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 
 - **Off is exactly `{"state":"OFF"}`.** Any `transition` key, even 0, makes Zigbee2MQTT send a level-0 move instead, and several bulbs stay on at minimum brightness.
 - **Never send `transition` for color.** IKEA bulbs freeze and drop new colors until a fade finishes.
+- **After turning a color bulb back on, send its color again by itself.** IKEA bulbs can drop a color that arrives while they fade on, and Zigbee2MQTT still reports the color it sent. The PR flash restores each bulb, waits 1.2 seconds, and repeats a color-only command twice.
 - **Throttle sliders to one command per 400 ms, and always send the final value.** Faster updates get dropped.
 - **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for any group, or `{"name": ..., "light": ...}` for one bulb. The extension refuses any `group` that Zigbee2MQTT does not report as a group, and any `light` that it does not report as a light.
 - **Offer a bulb only the presets it can show.** A Color or Rainbow preset needs color support, and a White preset needs color temperature.

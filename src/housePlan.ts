@@ -1,9 +1,9 @@
 import { Array, Schema } from 'effect'
 
 // NOTE: Estimated from photos of each room, so sizes are approximate. North is
-// the living room window wall, x grows east, and z grows south. No photo shows
-// how the bedroom wing joins the kitchen, so the two doors on the great room's
-// west wall and the hallway between them are inferred.
+// the living room window wall, x grows east, and z grows south. The bedroom door
+// opens straight off the great room, and the closet cuts into the far corner of
+// the bedroom. The bathroom door's position is inferred.
 
 export const HOUSE_WIDTH = 7.8
 export const HOUSE_DEPTH = 7.9
@@ -16,6 +16,7 @@ const LIVING_ROOM_DEPTH = 3.3
 const KITCHEN_SOUTH = 6.9
 const BEDROOM_DEPTH = 3.4
 const BEDROOM_WING_MIDDLE = 4.6
+const CLOSET_WIDTH = 2.6
 const STAIRS_WEST = 2.3
 const STAIRS_FOOT_X = 5.7
 const STAIRS_OPENING_WIDTH = 1.38
@@ -73,7 +74,6 @@ export const RoomId = Schema.Literals([
   'LivingRoom',
   'Kitchen',
   'Stairs',
-  'Hallway',
   'Bedroom',
   'Closet',
   'Bathroom',
@@ -99,20 +99,25 @@ export type Furniture = Readonly<{
 
 export type LightSpot = Readonly<{ x: number; y: number; z: number }>
 
-export type HouseRoom = Readonly<{
-  id: RoomId
-  label: string
+export type RoomArea = Readonly<{
   x: number
   z: number
   width: number
   depth: number
-  floorHex: string
-  lightSpace: string
   doors: ReadonlyArray<Door>
-  furniture: ReadonlyArray<Furniture>
-  lightSpots: ReadonlyArray<LightSpot>
-  labelSpot: Readonly<{ x: number; z: number }>
 }>
+
+export type HouseRoom = RoomArea &
+  Readonly<{
+    id: RoomId
+    label: string
+    floorHex: string
+    lightSpace: string
+    annexes: ReadonlyArray<RoomArea>
+    furniture: ReadonlyArray<Furniture>
+    lightSpots: ReadonlyArray<LightSpot>
+    labelSpot: Readonly<{ x: number; z: number }>
+  }>
 
 // FURNITURE
 
@@ -283,9 +288,8 @@ const OPEN_LIVING_TO_KITCHEN_SOUTH: Door = {
   ...OPEN_LIVING_TO_KITCHEN_NORTH,
   side: 'South',
 }
-const HALLWAY_DOOR_FROM = 3.75
 const BATHROOM_DOOR_FROM = 5.4
-const BEDROOM_DOOR_FROM = 2.7
+const BEDROOM_DOOR_FROM = 2.5
 const CLOSET_DOOR_FROM = 0.7
 const DOOR_WIDTH = 0.8
 const CLOSET_DOOR_WIDTH = 1.5
@@ -304,7 +308,11 @@ const LIVING_ROOM: HouseRoom = {
   depth: LIVING_ROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
-  doors: [OPEN_LIVING_TO_KITCHEN_SOUTH],
+  annexes: [],
+  doors: [
+    OPEN_LIVING_TO_KITCHEN_SOUTH,
+    { side: 'West', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
+  ],
   furniture: [
     ...northWindow(4.06, 1.1),
     ...northWindow(6.41, 1.09),
@@ -345,8 +353,8 @@ const LIVING_ROOM: HouseRoom = {
     box(7.2, 1.4, 0.26, 0.42, 0.26, SOFA_BACK_HEX, 0.42),
     box(5.7, 1.4, 0.82, 0.8, 0.03, TABLE_GLASS_HEX, 0.4),
     box(5.76, 1.46, 0.7, 0.68, 0.3, WICKER_HEX),
-    box(3.62, 1.05, 0.48, 2.2, 0.82, OAK_HEX),
-    box(3.8, 1.5, 0.06, 1.1, 0.62, SCREEN_HEX, 0.82),
+    box(3.62, 0.9, 0.48, 1.5, 0.82, OAK_HEX),
+    box(3.8, 1.1, 0.06, 1.1, 0.62, SCREEN_HEX, 0.82),
     wallArt(3.6, 0.35, 0.04, 0.72, 1.25, 0.9),
     box(4.2, 0.05, 0.56, 0.45, 0.62, BIN_HEX),
     box(4.26, 0.6, 0.44, 0.36, 0.36, CARDBOARD_HEX),
@@ -368,8 +376,8 @@ const LIVING_ROOM: HouseRoom = {
 }
 
 const PENDANT_Z = 4.2
-const FIRST_PENDANT_X = 7.0
-const SECOND_PENDANT_X = 6.2
+const LESS_WOBBLY_PENDANT_X = 6.2
+const MORE_WOBBLY_PENDANT_X = 7.0
 const STOOL_Z = 3.5
 const STOVE = { z: 5, depth: 0.76 }
 const SINK_RUN_DEPTH = 0.58
@@ -385,9 +393,9 @@ const KITCHEN: HouseRoom = {
   depth: KITCHEN_SOUTH - LIVING_ROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
+  annexes: [],
   doors: [
     OPEN_LIVING_TO_KITCHEN_NORTH,
-    { side: 'West', from: HALLWAY_DOOR_FROM, width: DOOR_WIDTH },
     { side: 'West', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH },
     {
       side: 'South',
@@ -399,10 +407,10 @@ const KITCHEN: HouseRoom = {
     box(5.5, 3.9, 2.3, 0.8, COUNTER_HEIGHT, CABINET_HEX),
     box(5.45, 3.66, 2.35, 1.06, COUNTER_THICKNESS, QUARTZ_HEX, COUNTER_HEIGHT),
     box(7.3, 3.95, 0.48, 0.4, 0.3, WHITE_HEX, COUNTER_HEIGHT),
-    ...barStool(FIRST_PENDANT_X, STOOL_Z),
-    ...barStool(SECOND_PENDANT_X, STOOL_Z),
-    ...lanternPendant(FIRST_PENDANT_X, PENDANT_Z),
-    ...lanternPendant(SECOND_PENDANT_X, PENDANT_Z),
+    ...barStool(LESS_WOBBLY_PENDANT_X, STOOL_Z),
+    ...barStool(MORE_WOBBLY_PENDANT_X, STOOL_Z),
+    ...lanternPendant(LESS_WOBBLY_PENDANT_X, PENDANT_Z),
+    ...lanternPendant(MORE_WOBBLY_PENDANT_X, PENDANT_Z),
     ...counter(7.18, 4.72, 0.62, STOVE.z - 4.72),
     ...counter(7.18, STOVE.z + STOVE.depth, 0.62, 0.36),
     box(7.04, STOVE.z, 0.76, STOVE.depth, 0.94, WHITE_HEX),
@@ -424,8 +432,8 @@ const KITCHEN: HouseRoom = {
     ),
   ],
   lightSpots: [
-    lanternSpot(FIRST_PENDANT_X, PENDANT_Z),
-    lanternSpot(SECOND_PENDANT_X, PENDANT_Z),
+    lanternSpot(LESS_WOBBLY_PENDANT_X, PENDANT_Z),
+    lanternSpot(MORE_WOBBLY_PENDANT_X, PENDANT_Z),
   ],
 }
 
@@ -439,6 +447,7 @@ const STAIRS: HouseRoom = {
   depth: HOUSE_DEPTH - KITCHEN_SOUTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
+  annexes: [],
   doors: [
     {
       side: 'North',
@@ -462,34 +471,17 @@ const STAIRS: HouseRoom = {
   lightSpots: [],
 }
 
-const HALLWAY: HouseRoom = {
-  id: 'Hallway',
-  label: 'Hallway',
-  labelSpot: { x: 3.1, z: 4.0 },
-  x: GREAT_ROOM_WEST - 1,
-  z: BEDROOM_DEPTH,
-  width: 1,
-  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
-  floorHex: FLOOR_HEX,
-  lightSpace: 'Hallway',
-  doors: [
-    { side: 'North', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
-    { side: 'East', from: HALLWAY_DOOR_FROM, width: DOOR_WIDTH },
-  ],
-  furniture: [],
-  lightSpots: [],
-}
-
 const CLOSET: HouseRoom = {
   id: 'Closet',
   label: 'Closet',
   labelSpot: { x: 1.3, z: 4.05 },
   x: 0,
   z: BEDROOM_DEPTH,
-  width: GREAT_ROOM_WEST - 1,
+  width: CLOSET_WIDTH,
   depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Closet',
+  annexes: [],
   doors: [{ side: 'North', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH }],
   furniture: [
     box(0.35, BEDROOM_WING_MIDDLE - 0.45, 0.9, 0.42, 1.55, CLOTHES_HEX, 0.3),
@@ -512,6 +504,20 @@ const UFO_LIGHT = { x: 2, z: 1.7 }
 const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
 const FAN = { x: 2.45, z: 0.3 }
 
+const BEDROOM_ENTRY: RoomArea = {
+  x: CLOSET_WIDTH,
+  z: BEDROOM_DEPTH,
+  width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
+  doors: [
+    {
+      side: 'North',
+      from: CLOSET_WIDTH,
+      width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+    },
+  ],
+}
+
 const BEDROOM: HouseRoom = {
   id: 'Bedroom',
   label: 'Bedroom',
@@ -522,9 +528,15 @@ const BEDROOM: HouseRoom = {
   depth: BEDROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bedroom',
+  annexes: [BEDROOM_ENTRY],
   doors: [
     { side: 'South', from: CLOSET_DOOR_FROM, width: CLOSET_DOOR_WIDTH },
-    { side: 'South', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
+    {
+      side: 'South',
+      from: CLOSET_WIDTH,
+      width: GREAT_ROOM_WEST - CLOSET_WIDTH,
+    },
+    { side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
   ],
   furniture: [
     box(BED.x, BED.z - 0.05, 0.1, BED.width + 0.1, 0.85, BED_FRAME_HEX),
@@ -555,6 +567,7 @@ const BEDROOM: HouseRoom = {
     round(FAN.x, FAN.z, 0.02, 1.1, FRAME_HEX),
     ball(FAN.x, 1.22, FAN.z, 0.2, FRAME_HEX),
     box(2.7, 0.05, 0.85, 0.46, 1.25, OAK_HEX),
+    box(2.95, 4.1, 0.55, 0.45, 0.42, WICKER_HEX),
     box(2.85, 0, 0.55, 0.03, 0.62, PORCELAIN_HEX, 1.42),
     round(3.25, 0.32, 0.01, 0.42, CHERRY_HEX, 1.88),
     ball(3.25, 1.76, 0.32, 0.13, CHERRY_HEX),
@@ -601,6 +614,7 @@ const BATHROOM: HouseRoom = {
   depth: KITCHEN_SOUTH - BEDROOM_WING_MIDDLE,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bathroom',
+  annexes: [],
   doors: [{ side: 'East', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
     box(0.05, BEDROOM_WING_MIDDLE + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
@@ -654,7 +668,6 @@ export const ROOMS: ReadonlyArray<HouseRoom> = [
   LIVING_ROOM,
   KITCHEN,
   STAIRS,
-  HALLWAY,
   BEDROOM,
   CLOSET,
   BATHROOM,

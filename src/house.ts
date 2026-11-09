@@ -22,6 +22,7 @@ import {
   type Door,
   type HouseRoom,
   ROOMS,
+  type RoomArea,
   RoomId,
   type WallSide,
 } from './housePlan'
@@ -54,7 +55,7 @@ export type WallSpan = Readonly<{ from: number; to: number }>
 
 // DERIVED
 
-const sideRange = (room: HouseRoom, side: WallSide): WallSpan =>
+const sideRange = (room: RoomArea, side: WallSide): WallSpan =>
   side === 'North' || side === 'South'
     ? { from: room.x, to: room.x + room.width }
     : { from: room.z, to: room.z + room.depth }
@@ -62,7 +63,7 @@ const sideRange = (room: HouseRoom, side: WallSide): WallSpan =>
 const byDoorStart = Order.mapInput(Order.Number, (door: Door) => door.from)
 
 export const wallSpans = (
-  room: HouseRoom,
+  room: RoomArea,
   side: WallSide,
 ): ReadonlyArray<WallSpan> => {
   const range = sideRange(room, side)
@@ -87,6 +88,11 @@ export const wallSpans = (
     span => span.to > span.from,
   )
 }
+
+export const roomAreas = (room: HouseRoom): ReadonlyArray<RoomArea> => [
+  room,
+  ...room.annexes,
+]
 
 export const roomById = (roomId: RoomId): Option.Option<HouseRoom> =>
   Array.findFirst(ROOMS, room => room.id === roomId)
@@ -119,7 +125,7 @@ const startsWithRoomName = (light: Light, room: HouseRoom): boolean =>
     String.toLowerCase(light.name),
   )
 
-const DEFAULT_ROOM_ID: RoomId = 'Hallway'
+const DEFAULT_ROOM_ID: RoomId = 'Stairs'
 
 const roomIdOfLight = (light: Light, groups: ReadonlyArray<Group>): RoomId =>
   pipe(
@@ -204,10 +210,19 @@ export const placedBulbs = (
 export const roomAt = (x: number, z: number): Option.Option<RoomId> =>
   pipe(
     ROOMS,
-    Array.findFirst(
-      room =>
-        Number.between(x, { minimum: room.x, maximum: room.x + room.width }) &&
-        Number.between(z, { minimum: room.z, maximum: room.z + room.depth }),
+    Array.findFirst(room =>
+      Array.some(
+        roomAreas(room),
+        area =>
+          Number.between(x, {
+            minimum: area.x,
+            maximum: area.x + area.width,
+          }) &&
+          Number.between(z, {
+            minimum: area.z,
+            maximum: area.z + area.depth,
+          }),
+      ),
     ),
     Option.map(room => room.id),
   )

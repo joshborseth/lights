@@ -35,6 +35,7 @@ import {
   HouseBulb,
   HouseSelection,
   nearestBulbName,
+  roomAreas,
   roomAt,
   sharesLight,
   wallSpans,
@@ -45,6 +46,7 @@ import {
   HOUSE_WIDTH,
   type HouseRoom,
   ROOMS,
+  type RoomArea,
   type RoomId,
   WALL_HEIGHT,
   type WallSide,
@@ -209,18 +211,18 @@ const withColor = <Geometry extends BufferGeometry>(
   return geometry
 }
 
-const floorGeometry = (room: HouseRoom): BufferGeometry =>
+const floorGeometry = (area: RoomArea, hex: string): BufferGeometry =>
   withColor(
-    new PlaneGeometry(room.width, room.depth)
+    new PlaneGeometry(area.width, area.depth)
       .rotateX(-Math.PI / 2)
-      .translate(room.x + room.width / 2, 0, room.z + room.depth / 2),
-    room.floorHex,
+      .translate(area.x + area.width / 2, 0, area.z + area.depth / 2),
+    hex,
   )
 
 const SIDES: ReadonlyArray<WallSide> = ['North', 'South', 'East', 'West']
 
 const wallQuad = (
-  room: HouseRoom,
+  room: RoomArea,
   side: WallSide,
   from: number,
   to: number,
@@ -243,7 +245,7 @@ const wallQuad = (
 }
 
 const wallCap = (
-  room: HouseRoom,
+  room: RoomArea,
   side: WallSide,
   from: number,
   to: number,
@@ -269,13 +271,8 @@ const wallCap = (
 }
 
 const roomWalls = <Geometry>(
-  room: HouseRoom,
-  build: (
-    room: HouseRoom,
-    side: WallSide,
-    from: number,
-    to: number,
-  ) => Geometry,
+  room: RoomArea,
+  build: (room: RoomArea, side: WallSide, from: number, to: number) => Geometry,
 ): ReadonlyArray<Geometry> =>
   Array.flatMap(SIDES, side =>
     Array.map(wallSpans(room, side), ({ from, to }) =>
@@ -356,10 +353,12 @@ const makeRoomVisual = (room: HouseRoom, scene: Scene): RoomVisual => {
     },
   })
   const geometry = mergedOrThrow([
-    floorGeometry(room),
-    ...roomWalls(room, (wallRoom, side, from, to) =>
-      withColor(wallQuad(wallRoom, side, from, to), WALL_HEX),
-    ),
+    ...Array.flatMap(roomAreas(room), area => [
+      floorGeometry(area, room.floorHex),
+      ...roomWalls(area, (wallArea, side, from, to) =>
+        withColor(wallQuad(wallArea, side, from, to), WALL_HEX),
+      ),
+    ]),
     ...Array.map(room.furniture, furnitureGeometry),
   ])
   scene.add(new Mesh(geometry, material))
@@ -367,13 +366,14 @@ const makeRoomVisual = (room: HouseRoom, scene: Scene): RoomVisual => {
 }
 
 const addHouseShell = (scene: Scene): void => {
+  const areas = Array.flatMap(ROOMS, roomAreas)
   const caps = mergedOrThrow(
-    Array.flatMap(ROOMS, room => roomWalls(room, wallCap)),
+    Array.flatMap(areas, area => roomWalls(area, wallCap)),
   )
   scene.add(new Mesh(caps, new MeshBasicMaterial({ color: WALL_CAP_HEX })))
 
   const ghostWalls = mergedOrThrow(
-    Array.flatMap(ROOMS, room => roomWalls(room, wallQuad)),
+    Array.flatMap(areas, area => roomWalls(area, wallQuad)),
   )
   scene.add(
     new Mesh(
@@ -389,15 +389,15 @@ const addHouseShell = (scene: Scene): void => {
   )
 
   const slab = mergedOrThrow(
-    Array.map(ROOMS, room =>
+    Array.map(areas, area =>
       new BoxGeometry(
-        room.width + SLAB_MARGIN * 2,
+        area.width + SLAB_MARGIN * 2,
         SLAB_THICKNESS,
-        room.depth + SLAB_MARGIN * 2,
+        area.depth + SLAB_MARGIN * 2,
       ).translate(
-        room.x + room.width / 2,
+        area.x + area.width / 2,
         -SLAB_THICKNESS / 2 - 0.01,
-        room.z + room.depth / 2,
+        area.z + area.depth / 2,
       ),
     ),
   )

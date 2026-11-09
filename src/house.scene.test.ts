@@ -133,7 +133,7 @@ describe('house view', () => {
     scene(
       { update, view },
       given(loaded),
-      click(role('button', { name: 'Hallway' })),
+      click(role('button', { name: 'Stairs' })),
       expect(role('slider', { name: 'Porch brightness' })).toExist(),
     )
   })

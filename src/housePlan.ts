@@ -2,8 +2,9 @@ import { Array, Schema } from 'effect'
 
 // NOTE: Estimated from photos of each room, so sizes are approximate. North is
 // the living room window wall, x grows east, and z grows south. The bedroom door
-// opens straight off the great room. The closet in the bedroom's far corner is
-// deliberately left out, and the bathroom door's position is inferred.
+// opens straight off the great room. The closet is deliberately left out and its
+// floor counts as bedroom, so the bedroom is one rectangle that reaches the
+// bathroom. The bathroom door's position is inferred.
 
 export const HOUSE_WIDTH = 7.8
 export const HOUSE_DEPTH = 7.9
@@ -14,9 +15,7 @@ const GREAT_ROOM_WEST = 3.6
 const GREAT_ROOM_WIDTH = 4.2
 const LIVING_ROOM_DEPTH = 3.3
 const KITCHEN_SOUTH = 6.9
-const BEDROOM_DEPTH = 3.4
-const BEDROOM_WING_MIDDLE = 4.6
-const BEDROOM_ENTRY_WEST = 2.6
+const BEDROOM_DEPTH = 4.6
 const STAIRS_WEST = 2.3
 const STAIRS_FOOT_X = 5.7
 const STAIRS_OPENING_WIDTH = 1.38
@@ -472,20 +471,6 @@ const UFO_LIGHT = { x: 2, z: 1.7 }
 const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
 const FAN = { x: 2.45, z: 0.3 }
 
-const BEDROOM_ENTRY: RoomArea = {
-  x: BEDROOM_ENTRY_WEST,
-  z: BEDROOM_DEPTH,
-  width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
-  depth: BEDROOM_WING_MIDDLE - BEDROOM_DEPTH,
-  doors: [
-    {
-      side: 'North',
-      from: BEDROOM_ENTRY_WEST,
-      width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
-    },
-  ],
-}
-
 const BEDROOM: HouseRoom = {
   id: 'Bedroom',
   label: 'Bedroom',
@@ -496,15 +481,8 @@ const BEDROOM: HouseRoom = {
   depth: BEDROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bedroom',
-  annexes: [BEDROOM_ENTRY],
-  doors: [
-    {
-      side: 'South',
-      from: BEDROOM_ENTRY_WEST,
-      width: GREAT_ROOM_WEST - BEDROOM_ENTRY_WEST,
-    },
-    { side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
-  ],
+  annexes: [],
+  doors: [{ side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
     box(BED.x, BED.z - 0.05, 0.1, BED.width + 0.1, 0.85, BED_FRAME_HEX),
     box(BED.x + 0.1, BED.z, BED.length - 0.1, BED.width, 0.3, BED_FRAME_HEX),
@@ -576,19 +554,19 @@ const BATHROOM: HouseRoom = {
   label: 'Bathroom',
   labelSpot: { x: 2.75, z: 6.05 },
   x: 0,
-  z: BEDROOM_WING_MIDDLE,
+  z: BEDROOM_DEPTH,
   width: GREAT_ROOM_WEST,
-  depth: KITCHEN_SOUTH - BEDROOM_WING_MIDDLE,
+  depth: KITCHEN_SOUTH - BEDROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bathroom',
   annexes: [],
   doors: [{ side: 'East', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
-    box(0.05, BEDROOM_WING_MIDDLE + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
-    box(0.77, BEDROOM_WING_MIDDLE + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
+    box(0.05, BEDROOM_DEPTH + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
+    box(0.77, BEDROOM_DEPTH + 0.02, 0.72, 0.68, 0.92, WHITE_HEX),
     box(
       VANITY.x,
-      BEDROOM_WING_MIDDLE + 0.02,
+      BEDROOM_DEPTH + 0.02,
       VANITY.width,
       VANITY.depth,
       0.82,
@@ -596,7 +574,7 @@ const BATHROOM: HouseRoom = {
     ),
     box(
       VANITY.x,
-      BEDROOM_WING_MIDDLE,
+      BEDROOM_DEPTH,
       VANITY.width + 0.02,
       VANITY.depth + 0.02,
       COUNTER_THICKNESS,
@@ -611,8 +589,8 @@ const BATHROOM: HouseRoom = {
       BATHROOM_ORB.radius,
       LANTERN_HEX,
     ),
-    box(0.9, BEDROOM_WING_MIDDLE, 0.9, 0.33, 0.62, CABINET_HEX, 1.55),
-    box(1.85, BEDROOM_WING_MIDDLE, 1.05, 0.03, 0.72, GOLD_HEX, 1.2),
+    box(0.9, BEDROOM_DEPTH, 0.9, 0.33, 0.62, CABINET_HEX, 1.55),
+    box(1.85, BEDROOM_DEPTH, 1.05, 0.03, 0.72, GOLD_HEX, 1.2),
     box(0, 5.15, 0.05, 0.65, 0.85, GLASS_HEX, 1.15),
     box(1.6, 5.3, 0.85, 0.5, 0.015, RUG_HEX),
     box(0.35, 6.12, 1.75, 0.76, 0.52, PORCELAIN_HEX),

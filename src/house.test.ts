@@ -234,14 +234,8 @@ describe('wallSpans', () => {
     expect(doorsBetween('Kitchen', 'West', 4.6, 6.9)).toEqual(
       doorsBetween('Bathroom', 'East', 4.6, 6.9),
     )
-    expect(doorsBetween('Bedroom', 'South', 0, 2.6)).toEqual([])
-    const bedroomEntryOpening = ROOMS.find(
-      candidate => candidate.id === 'Bedroom',
-    )?.annexes[0]?.doors.map(({ from, width }) => [from, width])
-
-    expect(doorsBetween('Bedroom', 'South', 2.6, 3.6)).toEqual(
-      bedroomEntryOpening,
-    )
+    expect(doorsBetween('Bedroom', 'South', 0, 3.6)).toEqual([])
+    expect(doorsBetween('Bathroom', 'North', 0, 3.6)).toEqual([])
   })
 })
 
@@ -324,6 +318,7 @@ describe('roomAt', () => {
     expect(roomAt(5, 1)).toEqual(Option.some('LivingRoom'))
     expect(roomAt(1, 1)).toEqual(Option.some('Bedroom'))
     expect(roomAt(1, 6)).toEqual(Option.some('Bathroom'))
+    expect(roomAt(1, 4)).toEqual(Option.some('Bedroom'))
     expect(roomAt(3, 4)).toEqual(Option.some('Bedroom'))
     expect(roomAt(6, 7.5)).toEqual(Option.some('Stairs'))
   })
@@ -331,7 +326,6 @@ describe('roomAt', () => {
   test('finds nothing outside the house', () => {
     expect(roomAt(-1, 1)).toEqual(Option.none())
     expect(roomAt(1, 7.5)).toEqual(Option.none())
-    expect(roomAt(1, 4)).toEqual(Option.none())
     expect(roomAt(6, 20)).toEqual(Option.none())
   })
 })

@@ -89,12 +89,12 @@ const ANCHOR =
 const COLOR_INPUT =
   'h-11 w-full cursor-pointer rounded-lg border border-input bg-transparent p-1 [&::-moz-color-swatch]:rounded-md [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-md [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0'
 const SHEET = cn(
-  'fixed inset-x-0 bottom-0 z-30 flex max-h-[62dvh] animate-in flex-col gap-4 overflow-y-auto overscroll-contain rounded-t-[1.75rem] px-5 pt-5 pb-[max(env(safe-area-inset-bottom),1.25rem)] duration-300 ease-out fade-in slide-in-from-bottom-6',
+  'absolute inset-x-0 bottom-0 z-30 flex max-h-[62dvh] animate-in flex-col gap-4 overflow-y-auto overscroll-contain rounded-t-[1.75rem] px-5 pt-5 pb-[max(env(safe-area-inset-bottom),1.25rem)] duration-300 ease-out fade-in slide-in-from-bottom-6',
   'bg-[oklch(0.17_0.012_265/0.86)] ring-1 ring-white/10 backdrop-blur-2xl',
   'no-scrollbar md:top-4 md:right-4 md:bottom-auto md:left-auto md:max-h-[calc(100dvh-2rem)] md:w-96 md:rounded-[1.75rem] md:pb-5 md:slide-in-from-right-6 md:slide-in-from-bottom-0',
 )
 const PAGE =
-  'fixed inset-0 z-40 animate-in overflow-y-auto overscroll-contain bg-background duration-200 ease-out fade-in slide-in-from-bottom-3'
+  'absolute inset-0 z-40 animate-in overflow-y-auto overscroll-contain bg-background duration-200 ease-out fade-in slide-in-from-bottom-3'
 const PAGE_COLUMN =
   'mx-auto max-w-xl pr-[max(env(safe-area-inset-right),1rem)] pl-[max(env(safe-area-inset-left),1rem)]'
 const SECTION = 'flex flex-col gap-3'
@@ -172,7 +172,11 @@ const targetLevelLabel = (
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: 'Lights',
   body: h.main(
-    [h.Class('fixed inset-0 overflow-hidden bg-background')],
+    [
+      h.Class(
+        'fixed inset-x-0 top-0 h-[var(--app-height,100%)] overflow-hidden bg-background',
+      ),
+    ],
     [
       Option.match(model.maybeHouseFailure, {
         onNone: () => houseStageView(model, h),
@@ -516,12 +520,15 @@ const summaryView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+// NOTE: iOS fades a blur over the content just below the status bar, and a web
+// app cannot turn it off. The extra top padding, sized from the inset so that
+// screens without a status bar inset keep the tight layout, clears that band.
 const topBarView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const isInRoom = model.focus._tag === 'Room' || model.focus._tag === 'Bulb'
   return h.div(
     [
       h.Class(
-        'pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between bg-linear-to-b from-black/45 to-transparent pt-[max(calc(env(safe-area-inset-top)+0.5rem),1rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-10 pl-[max(env(safe-area-inset-left),1.25rem)]',
+        'pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between bg-linear-to-b from-black/45 to-transparent pt-[max(calc(env(safe-area-inset-top)+min(env(safe-area-inset-top),2rem)+0.5rem),1rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-10 pl-[max(env(safe-area-inset-left),1.25rem)]',
       ),
     ],
     [
@@ -553,7 +560,7 @@ const messageView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
       h.Class(
-        'pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top)+6rem)] z-50 flex flex-col items-center gap-2 px-4',
+        'pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top)+min(env(safe-area-inset-top),2rem)+6rem)] z-50 flex flex-col items-center gap-2 px-4',
       ),
     ],
     [

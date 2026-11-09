@@ -38,8 +38,6 @@ if [ "$with_extension" = true ]; then
   node scripts/deploy-extension.mjs
 fi
 
-host="$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')"
-curl --fail --silent --show-error "https://$host:8444/" | cmp - dist/index.html
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
   "http://127.0.0.1:8445/" | cmp - dist/index.html
 echo "Deployed $(git rev-parse --short HEAD)."

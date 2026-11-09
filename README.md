@@ -22,19 +22,14 @@ bun run build
 
 ## Install on a phone
 
-The app is a PWA, so it can live on the home screen. It has two addresses:
+The app has one address, `http://192.168.1.67:8445`. It works on the home network without Tailscale. Away from home it works while Tailscale is connected, through a subnet route for that one address.
 
-| Address                    | Reachable from                 | Home screen install                  |
-| -------------------------- | ------------------------------ | ------------------------------------ |
-| The tailnet HTTPS URL      | Any device on the tailnet      | Full PWA that opens offline          |
-| `http://192.168.1.67:8445` | Any device on the home network | Works, but needs the network to open |
+The address is plain HTTP, so browsers give it no service worker. The app needs a connection to open, and Android Chrome adds a shortcut instead of installing it.
 
-The local address is plain HTTP, so browsers give it no service worker, and Android Chrome adds a shortcut instead of installing it. Each address is a separate app on the phone.
+1. Open the address in Safari. On Android, use Chrome.
+2. Choose Share, then Add to Home Screen.
 
-1. Open one of the addresses in Safari. On Android, use Chrome.
-2. Choose Share, then Add to Home Screen. On Android, choose Install app.
-
-To let the tailnet app connect on its own, turn on VPN On Demand in the Tailscale app. Deploys reach the phone the next time the app opens or returns to the foreground. An origin change, such as a new port, needs a fresh install.
+To connect on its own away from home, turn on VPN On Demand and Use Tailscale Subnets in the Tailscale app. Deploys reach the phone the next time the app loads. An origin change, such as a new port, needs a fresh install.
 
 ## Deploy
 

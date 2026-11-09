@@ -23,12 +23,12 @@ Windfront cannot be uninstalled. Zigbee2MQTT's WebSocket API comes from its fron
 ```
 Browser (Foldkit SPA)
    | same-origin WebSocket, /api
-Tailscale Serve (tailnet only)  --- static files from dist/
+lights-lan (Bun, http://192.168.1.67:8445)  --- static files from dist/
    |
 Zigbee2MQTT /api  ->  Zigbee radio
 ```
 
-There is no backend to write or run. Zigbee2MQTT already sends every device, group, and state change over its WebSocket as `{ topic, payload }`, and accepts commands in the same shape. A read-only connection test confirmed this against the live system: `bridge/devices`, `bridge/groups` (with scenes), and per-light state all arrive on connect.
+`lights-lan` only serves files and relays requests, so there is no application backend. Zigbee2MQTT already sends every device, group, and state change over its WebSocket as `{ topic, payload }`, and accepts commands in the same shape. A read-only connection test confirmed this against the live system: `bridge/devices`, `bridge/groups` (with scenes), and per-light state all arrive on connect.
 
 Foldkit pieces, following the `websocket-chat` example this repo was scaffolded from:
 
@@ -39,7 +39,7 @@ Foldkit pieces, following the `websocket-chat` example this repo was scaffolded 
 - The screen is one tree built from Zigbee2MQTT's groups: a group nests under the smallest group that fully contains it. A group that cuts across the tree, such as one spanning two rooms, is listed separately. Every level has the same controls.
 - The UI uses [foldcn](https://foldcn.elianiva.com) components, copied into `src/components/ui/`. Its Slider handles brightness and temperature with large touch targets. Only the slider being dragged keeps state, in `maybeActiveSlider`, so no bulb needs its own Slider Submodel. Foldcn has no color picker, so color stays a native input.
 
-The app installs to a phone's home screen as a PWA. `pwa/service-worker.js` caches only the app's own built files, so the app opens without the tailnet and then reports that it cannot connect. It never touches `/api` or `/automations`, and it never queues a command. The build generates `sw.js` from it. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
+The app can be added to a phone's home screen. `pwa/service-worker.js` is inactive, because browsers allow service workers only over HTTPS and the app is served over plain HTTP. If the app moves back to HTTPS, it caches only the app's own built files, never touches `/api` or `/automations`, and never queues a command. When the app returns to the foreground after 5 seconds or more, it replaces its socket, because a suspended phone can leave a socket that looks connected but is dead.
 
 The app has four tabs, Lights, House, Manage, and Automations, kept in the Model. It needs no client-side routes and no server fallback for deep links.
 
@@ -64,7 +64,7 @@ The Manage tab pairs bulbs, renames and removes them, moves them between groups,
 The Lights tab still needs no backend. The Automations tab does, because Zigbee2MQTT's socket only relays what Zigbee2MQTT itself publishes, and something must keep watching GitHub when no browser is open.
 
 ```
-Browser  --- /automations ---> Tailscale Serve (tailnet only)
+Browser  --- /automations ---> lights-lan
                                   |
                        lights-automations (Bun, 127.0.0.1:8093)
                           |                 |
@@ -107,7 +107,7 @@ Windfront stays available until the cutover.
 - Live view with automatic reconnect, plus controls for each bulb and group.
 - Preset apply, create, edit, and delete. Rainbow cannot be edited or deleted.
 - `extension/presets.mjs` is the source for the live extension. It adds a retained `preset/list` topic and `preset/save` and `preset/delete` commands, so preset editing needs no separate server.
-- Published on a tailnet-only port with Tailscale Serve, with `/api` proxied to Zigbee2MQTT. The WebSocket path was tested through Serve.
+- Published on a tailnet-only port with Tailscale Serve, with `/api` proxied to Zigbee2MQTT. The WebSocket path was tested through Serve. `lights-lan` has since replaced this; see Decisions.
 
 Deploy the app with `scripts/deploy.sh`. Hot-load the extension with `node scripts/deploy-extension.mjs`. When a change spans both, load the extension first: an older extension treats a bulb preset as a preset for All Lights.
 
@@ -125,7 +125,7 @@ Then use it from the phone for about a week.
 
 ## Decisions
 
-- The app is reachable on the tailnet and on the home network. `service/lan-main.ts` serves the same routes as Tailscale Serve at `http://192.168.1.67:8445`, and anyone on the home network can use it. Plain HTTP means no service worker at that address.
+- The app has one address, `http://192.168.1.67:8445`, served by `service/lan-main.ts`. Anyone on the home network can use it. Away from home, tailnet devices reach it through a subnet route for `192.168.1.67/32`, and the server also answers on the machine's Tailscale IP. Plain HTTP means no service worker.
 - Presets can be edited in the app.
 - Home Assistant stays for the TV and music.
-- Automations run in a small service on loopback, reached through the tailnet and home network addresses, because they must keep running with no browser open.
+- Automations run in a small service on loopback, reached through `lights-lan`, because they must keep running with no browser open.

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Builds the automations service, restarts it, and publishes its API on the
-# tailnet-only site. Sends nothing to the bulbs.
+# Builds the automations service and restarts it. Sends nothing to the bulbs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,5 +13,4 @@ systemctl --user daemon-reload
 systemctl --user enable lights-automations.service
 systemctl --user restart lights-automations.service
 
-sudo tailscale serve --bg --https=8444 --set-path=/automations http://127.0.0.1:8093/automations
 systemctl --user --no-pager --lines=5 status lights-automations.service

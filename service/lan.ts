@@ -17,9 +17,8 @@ export type LanDeps = Readonly<{
   fetchUpstream: (url: string, init: RequestInit) => Promise<Response>
 }>
 
-// NOTE: This mirrors the routes Tailscale Serve publishes, so the app behaves
-// the same at either address. OPTIONS passes through unanswered by CORS, which
-// keeps the automations service's rule that other sites cannot send commands.
+// NOTE: OPTIONS passes through unanswered by CORS, which keeps the automations
+// service's rule that other sites cannot send commands.
 export const makeLanHandler = ({
   distDir,
   automationsOrigin,

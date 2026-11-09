@@ -572,7 +572,9 @@ const unreachableView = (h: HtmlBuilder<Message>): Html =>
           Empty.title<Message>({}, ["Can't reach Zigbee2MQTT"], h),
           Empty.description<Message>(
             {},
-            ['Still trying. Check that this device is connected to Tailscale.'],
+            [
+              'Still trying. Check that this device is on the home network or connected to Tailscale.',
+            ],
             h,
           ),
         ],

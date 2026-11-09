@@ -547,7 +547,11 @@ const listScreen = (
         [h.Class(LIST)],
         [
           h.div(
-            [h.Class('flex items-center gap-3 pr-4')],
+            [
+              h.Class(
+                'relative flex items-center gap-3 pr-4 hover:bg-muted/40',
+              ),
+            ],
             [
               h.button(
                 [
@@ -561,7 +565,7 @@ const listScreen = (
                     }),
                   ),
                   h.Class(
-                    'flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left',
+                    'flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left after:absolute after:inset-0',
                   ),
                 ],
                 [
@@ -587,6 +591,7 @@ const listScreen = (
                 ],
               ),
               enabledSwitchView(model, snapshot, 'pr-merged-list-enabled', h),
+              icon(h, ChevronRight, 'size-4 shrink-0 text-muted-foreground'),
             ],
           ),
         ],

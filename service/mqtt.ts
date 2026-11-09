@@ -246,14 +246,13 @@ export const connectLights = (
             names.forEach(name => {
               states.delete(name)
             })
+            // NOTE: Only on or off. Zigbee2MQTT answers with everything else it
+            // knows, which is the last brightness and color the bulb was given.
+            // A brightness read straight from a bulb can be its minimum after a
+            // quick off and on, and the flash would then restore it almost dark.
             yield* Effect.forEach(
               names,
-              name =>
-                publish(`${name}/get`, {
-                  state: '',
-                  color: '',
-                  brightness: '',
-                }),
+              name => publish(`${name}/get`, { state: '' }),
               { discard: true },
             )
             yield* waitForStates(names, stateWaitMs)

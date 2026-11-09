@@ -7,12 +7,14 @@ import { connectLights } from './mqtt'
 class FakeClient extends EventEmitter {
   connected = true
   published: Array<string> = []
+  payloads: Array<string> = []
   answering = new Set<string>()
   subscribe = vi.fn()
   endAsync = () => Promise.resolve()
 
-  publishAsync = (topic: string): Promise<void> => {
+  publishAsync = (topic: string, payload: string): Promise<void> => {
     this.published.push(topic)
+    this.payloads.push(payload)
     const name = topic.match(/^zigbee2mqtt\/(.+)\/get$/)?.[1]
     if (name !== undefined && this.answering.has(name)) {
       this.emit(
@@ -61,6 +63,13 @@ describe('reading bulb state', () => {
     await Effect.runPromise(lights.readStates(NAMES, options))
     await Effect.runPromise(lights.readStates(NAMES, options))
     expect(getRequests(fake)).toHaveLength(4)
+  })
+
+  test('asks only whether each bulb is on', async () => {
+    const { fake, lights } = await setup()
+    fake.answering = new Set(NAMES)
+    await Effect.runPromise(lights.readStates(NAMES, { shouldAskBulbs: true }))
+    expect(fake.payloads).toEqual(['{"state":""}', '{"state":""}'])
   })
 
   test('a bulb that stops answering no longer counts as on', async () => {

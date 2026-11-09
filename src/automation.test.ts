@@ -5,7 +5,7 @@ import {
   DEFAULT_CONFIG,
   type PrMergeConfig,
   configProblem,
-  hexToHueSaturation,
+  hexToXy,
   isScheduleOpen,
   normalizeConfig,
 } from './automation'
@@ -116,11 +116,12 @@ describe('configProblem', () => {
   })
 })
 
-describe('hexToHueSaturation', () => {
-  test('keeps the original purple', () => {
-    expect(hexToHueSaturation('#AA00FF')).toEqual({
-      hue: 280,
-      saturation: 100,
-    })
+describe('hexToXy', () => {
+  test('keeps the purple the flash has always shown', () => {
+    expect(hexToXy('#AA00FF')).toEqual({ x: 0.331, y: 0.1296 })
+  })
+
+  test('does not divide by zero for black', () => {
+    expect(hexToXy('#000000')).toEqual({ x: 0, y: 0 })
   })
 })

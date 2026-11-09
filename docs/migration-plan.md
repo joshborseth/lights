@@ -96,6 +96,8 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Off is exactly `{"state":"OFF"}`.** Any `transition` key, even 0, makes Zigbee2MQTT send a level-0 move instead, and several bulbs stay on at minimum brightness.
 - **Never send `transition` for color.** IKEA bulbs freeze and drop new colors until a fade finishes.
 - **After turning a color bulb back on, send its color again by itself.** IKEA bulbs can drop a color that arrives while they fade on, and Zigbee2MQTT still reports the color it sent. The PR flash restores each bulb, waits 1.2 seconds, and repeats a color-only command twice.
+- **The PR flash sends color as x and y, never hue and saturation.** The kitchen's KAJPLATS bulbs have no hue and saturation mode. After a hue and saturation command they stay on that color while acknowledging x and y commands, and Zigbee2MQTT reports the color it sent. A color temperature command clears it.
+- **Before a flash, ask a bulb only for `state`.** Zigbee2MQTT replies with the brightness and color the bulb was last given. A brightness read from the bulb can be its minimum after a quick off and on, and the flash would then restore it almost dark.
 - **Throttle sliders to one command per 400 ms, and always send the final value.** Faster updates get dropped.
 - **Apply presets with `preset/set`.** Send `{"name": ..., "group": ...}` for any group, or `{"name": ..., "light": ...}` for one bulb. The extension refuses any `group` that Zigbee2MQTT does not report as a group, and any `light` that it does not report as a light.
 - **Offer a bulb only the presets it can show.** A Color or Rainbow preset needs color support, and a White preset needs color temperature.
@@ -104,7 +106,7 @@ The existing scripts learned these the hard way, and the app has to follow them:
 - **Send On and Off twice, 400 ms apart, for groups and bulbs.** A Rainbow frame already in flight can undo the first one, and the repeat reaches bulbs that missed it.
 - **Show reported state, not assumed state.** A slider may lead while dragging, but the next state frame from the bulb wins.
 - **A group slider keeps its own level.** It moves when dragged, and otherwise only when every bulb in the group, on or off, has ended up above it or below it. It then moves to the nearest bulb.
-- **Stop a Rainbow loop with hue and saturation, not hex.** The extension treats a group command carrying a recent Rainbow hex as its own echo and keeps looping. Per-light commands never stop the loop.
+- **Stop a Rainbow loop with x and y, not hex.** The extension treats a group command carrying a recent Rainbow hex as its own echo and keeps looping. Per-light commands never stop the loop.
 
 ## Milestones
 

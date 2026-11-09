@@ -66,6 +66,19 @@ const payloadsFor = (sent: ReadonlyArray<Sent>, name: string) =>
   )
 
 describe('runFlash', () => {
+  test('sends every flash color as x and y, even to a Rainbow group', async () => {
+    const { port, sent } = makePort({
+      states: { Orb: ON_STATE, Shroom: ON_STATE },
+      rainbow: ['All Lights'],
+    })
+    await Effect.runPromise(runFlash(port, FLASH))
+    const text = JSON.stringify(sent)
+    expect(text).toContain('"x":0.331')
+    expect(text).not.toContain('hue')
+    expect(text).not.toContain('saturation')
+    expect(text).not.toContain('hex')
+  })
+
   test('never sends a transition, and off is exactly state OFF', async () => {
     const { port, sent } = makePort({
       states: { Orb: ON_STATE, Shroom: ON_STATE },

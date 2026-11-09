@@ -1,6 +1,6 @@
 import { Array, Effect, Option, pipe } from 'effect'
 
-import { type FlashConfig, hexToHueSaturation } from '../src/automation'
+import { type FlashConfig, hexToXy } from '../src/automation'
 
 export const RAINBOW_PRESET = 'Rainbow'
 
@@ -33,16 +33,18 @@ export type FlashPort<E> = Readonly<{
 // and a fade on a color command freezes IKEA bulbs.
 export const OFF_FRAME: JsonObject = { state: 'OFF' }
 
+// NOTE: Always x and y. The kitchen's KAJPLATS bulbs have no hue and saturation
+// mode: after one such command they stay on that color while acknowledging x and
+// y commands. Hex is also out, because the presets extension treats a group
+// command with a recent Rainbow hex as its own echo and would keep looping.
 export const flashOnFrame = (flash: FlashConfig): JsonObject => ({
   state: 'ON',
   brightness: flash.brightness,
-  color: hexToHueSaturation(flash.hex),
+  color: hexToXy(flash.hex),
 })
 
-// NOTE: Hue and saturation on purpose. The presets extension treats a group
-// command with a recent Rainbow hex as its own echo and would keep looping.
 export const stopLoopFrame = (flash: FlashConfig): JsonObject => ({
-  color: hexToHueSaturation(flash.hex),
+  color: hexToXy(flash.hex),
 })
 
 const colorFields = (state: JsonObject): JsonObject => {

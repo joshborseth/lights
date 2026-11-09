@@ -325,27 +325,24 @@ export const withSameHours = (
 
 // COLOR
 
-export const hexToHueSaturation = (
-  hex: string,
-): Readonly<{ hue: number; saturation: number }> => {
+const roundToFourPlaces = (value: number): number =>
+  Math.round(value * 10_000) / 10_000
+
+// NOTE: The same matrix Zigbee2MQTT uses, with no gamma step, so a color lands
+// where its hue and saturation conversion put it on bulbs that only take x and y.
+export const hexToXy = (hex: string): Readonly<{ x: number; y: number }> => {
   const channel = (start: number): number =>
     parseInt(hex.slice(start, start + 2), 16) / 255
   const red = channel(1)
   const green = channel(3)
   const blue = channel(5)
-  const max = Math.max(red, green, blue)
-  const min = Math.min(red, green, blue)
-  const delta = max - min
-  const saturation = max === 0 ? 0 : Math.round((delta / max) * 100)
-  const sector =
-    delta === 0
-      ? 0
-      : max === red
-        ? (green - blue) / delta
-        : max === green
-          ? (blue - red) / delta + 2
-          : (red - green) / delta + 4
-  return { hue: Math.round((sector * 60 + 360) % 360), saturation }
+  const X = red * 0.664511 + green * 0.154324 + blue * 0.162028
+  const Y = red * 0.283881 + green * 0.668433 + blue * 0.047685
+  const Z = red * 0.000088 + green * 0.07231 + blue * 0.986039
+  const total = X + Y + Z
+  return total === 0
+    ? { x: 0, y: 0 }
+    : { x: roundToFourPlaces(X / total), y: roundToFourPlaces(Y / total) }
 }
 
 // STATUS

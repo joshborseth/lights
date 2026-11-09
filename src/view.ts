@@ -549,7 +549,7 @@ const topBarView = (model: Model, h: HtmlBuilder<Message>): Html => {
   return h.div(
     [
       h.Class(
-        'pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between bg-linear-to-b from-black/45 to-transparent pt-[max(calc(env(safe-area-inset-top)+0.5rem),1rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-10 pl-[max(env(safe-area-inset-left),1.25rem)]',
+        'pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between bg-linear-to-b from-black to-transparent pt-[max(calc(env(safe-area-inset-top)+0.5rem),1rem)] pr-[max(env(safe-area-inset-right),1rem)] pb-10 pl-[max(env(safe-area-inset-left),1.25rem)]',
       ),
     ],
     [
@@ -1471,7 +1471,7 @@ const pageView = (
       h.header(
         [
           h.Class(
-            'sticky top-0 z-10 bg-background/90 pt-[max(calc(env(safe-area-inset-top)+0.5rem),1rem)] pb-2 backdrop-blur-xl',
+            'sticky top-0 z-10 bg-linear-to-b from-black to-background/90 pt-[max(calc(env(safe-area-inset-top)+0.5rem),1rem)] pb-2 backdrop-blur-xl',
           ),
         ],
         [

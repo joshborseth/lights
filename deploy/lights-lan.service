@@ -1,0 +1,13 @@
+[Unit]
+Description=Lights app on the local network
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bun %h/.local/share/lights-lan/site.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

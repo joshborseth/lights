@@ -125,7 +125,7 @@ Then use it from the phone for about a week.
 
 ## Decisions
 
-- The app is tailnet only.
+- The app is reachable on the tailnet and on the home network. `service/lan-main.ts` serves the same routes as Tailscale Serve at `http://192.168.1.67:8445`, and anyone on the home network can use it. Plain HTTP means no service worker at that address.
 - Presets can be edited in the app.
 - Home Assistant stays for the TV and music.
-- Automations run in a small tailnet-only service, because they must keep running with no browser open.
+- Automations run in a small service on loopback, reached through the tailnet and home network addresses, because they must keep running with no browser open.

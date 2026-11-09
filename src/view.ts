@@ -102,10 +102,20 @@ const SECTION_TITLE = 'px-1 text-sm font-medium text-muted-foreground'
 const PRIMARY_GLOW_FILL = 'slider-fill [--glow:var(--primary)] [--level:0.6]'
 
 const brightnessPercent = (brightness: number): number =>
-  Math.round((brightness / MAX_BRIGHTNESS) * 100)
+  Math.max(1, Math.round((brightness / MAX_BRIGHTNESS) * 100))
 
 const formatPercent = (brightness: number): string =>
   `${brightnessPercent(brightness)}%`
+
+const WARM_FROM_MIREDS = 286
+const COOL_UP_TO_MIREDS = 200
+
+const temperatureName = (mireds: number): string => {
+  if (mireds >= WARM_FROM_MIREDS) {
+    return 'Warm'
+  }
+  return mireds <= COOL_UP_TO_MIREDS ? 'Cool' : 'Neutral'
+}
 
 const onCount = (model: Model, lights: ReadonlyArray<Light>): number =>
   Array.filter(lights, light => model.states[light.name]?.power === 'ON').length
@@ -163,8 +173,26 @@ const targetLevelLabel = (
     return 'Not reporting'
   }
   return status.isOn
-    ? formatPercent(shownBrightness(model, target, status))
+    ? `${formatPercent(shownBrightness(model, target, status))} brightness`
     : 'Off'
+}
+
+const roomStateLabel = (
+  model: Model,
+  lights: ReadonlyArray<Light>,
+  status: TargetStatus,
+): string => {
+  if (!status.hasReported) {
+    return 'Not reporting'
+  }
+  const count = onCount(model, lights)
+  if (count === 0) {
+    return 'Off'
+  }
+  if (lights.length === 1) {
+    return 'On'
+  }
+  return count === lights.length ? 'All on' : `${count} of ${lights.length} on`
 }
 
 // ROOT
@@ -312,7 +340,7 @@ const roomPillBody = (
             [
               hasNoResponse(model, target)
                 ? 'No response'
-                : targetLevelLabel(model, target, status),
+                : roomStateLabel(model, roomLights(model, room), status),
             ],
           ),
         ],
@@ -919,9 +947,10 @@ const targetHeaderView = (
     ],
   )
 
-type SliderClasses = Readonly<{
+type SliderOptions = Readonly<{
   filledTrackClass: string
   trackClass?: string
+  showsValueWhileDragging?: boolean
 }>
 
 const sliderView = (
@@ -930,7 +959,7 @@ const sliderView = (
   label: string,
   value: number,
   formatValue: (value: number) => string,
-  classes: SliderClasses,
+  options: SliderOptions,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.submodel({
@@ -943,7 +972,7 @@ const sliderView = (
         ariaLabel: label,
         formatValue,
         ignoresTouch: model.pageScroll._tag === 'Moving',
-        ...classes,
+        ...options,
       },
       h,
     ),
@@ -1009,7 +1038,7 @@ const targetSlidersView = (
           `${name} brightness`,
           shownBrightness(model, target, status),
           formatPercent,
-          { filledTrackClass: 'slider-fill' },
+          { filledTrackClass: 'slider-fill', showsValueWhileDragging: true },
           h,
         ),
         h,
@@ -1028,7 +1057,7 @@ const targetSlidersView = (
                 target,
                 Option.getOrElse(status.maybeColorTemp, () => range.min),
               ),
-              mireds => `${mireds} mireds`,
+              temperatureName,
               {
                 trackClass: TEMPERATURE_TRACK,
                 filledTrackClass: 'bg-transparent',
@@ -1188,7 +1217,7 @@ const roomDetail = (
   const level = targetLevelLabel(model, target, status)
   return lights.length < 2
     ? level
-    : `${onCount(model, lights)} of ${lights.length} on${isMixed(model, lights) ? ' · mixed' : ''}`
+    : `${roomStateLabel(model, lights, status)}${isMixed(model, lights) ? ' · mixed' : ''}`
 }
 
 const roomSheetView = (
@@ -1736,7 +1765,7 @@ const temperatureSliderView = (
         sliderId,
         label,
         value,
-        mireds => `${mireds} mireds`,
+        temperatureName,
         {
           trackClass: TEMPERATURE_TRACK,
           filledTrackClass: 'bg-transparent',

@@ -205,6 +205,54 @@ describe('view', () => {
     )
   })
 
+  test('a bulb names what its percentage measures', () => {
+    scene(
+      { update, view },
+      given(onBulb('Living Room Orb')),
+      expect(text('47% brightness')).toExist(),
+    )
+  })
+
+  test('a bulb at its lowest level never reads as zero', () => {
+    scene(
+      { update, view },
+      given({
+        ...onBulb('Living Room Orb'),
+        states: { 'Living Room Orb': { ...on, brightness: 1 } },
+      }),
+      expect(text('1% brightness')).toExist(),
+    )
+  })
+
+  test('the brightness knob carries the value it shows while dragged', () => {
+    scene(
+      { update, view },
+      given(onBulb('Living Room Orb')),
+      expect(role('slider', { name: 'Living Room Orb brightness' })).toHaveText(
+        '47%',
+      ),
+    )
+  })
+
+  test.each([
+    [370, 'Warm'],
+    [250, 'Neutral'],
+    [153, 'Cool'],
+  ])('a color temperature of %i mireds reads as %s', (mireds, name) => {
+    scene(
+      { update, view },
+      given({
+        ...onBulb('Living Room Orb'),
+        states: {
+          'Living Room Orb': { ...on, maybeColorTemp: Option.some(mireds) },
+        },
+      }),
+      expect(
+        role('slider', { name: 'Living Room Orb temperature' }),
+      ).toHaveAttr('aria-valuetext', name),
+    )
+  })
+
   test('the overview shows each room with live status', () => {
     scene(
       { update, view },
@@ -506,7 +554,32 @@ describe('view', () => {
       scene(
         { update, view },
         given({ ...nested, focus: HouseFocus.Room({ roomId: 'LivingRoom' }) }),
-        expect(text('2 of 2 on · mixed')).toExist(),
+        expect(text('All on · mixed')).toExist(),
+      )
+    })
+
+    test('the house labels each room by which of its lights are on', () => {
+      scene(
+        { update, view },
+        given(nested),
+        expect(text('All on')).toExist(),
+        expect(text('On')).toExist(),
+        expect(text('Off')).toExist(),
+        expect(text('47%')).toBeAbsent(),
+      )
+    })
+
+    test('a partly lit room says how many lights are on', () => {
+      scene(
+        { update, view },
+        given({
+          ...nested,
+          states: {
+            ...nested.states,
+            'Living Room Shroom': { ...on, power: 'OFF' },
+          },
+        }),
+        expect(text('1 of 2 on')).toExist(),
       )
     })
 

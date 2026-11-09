@@ -114,6 +114,10 @@ export const sliderLabelClass = 'text-sm font-medium'
 
 export const sliderValueClass = 'text-sm tabular-nums text-muted-foreground'
 
+/** Floats above the knob, and shows only while the knob is being dragged. */
+export const sliderDragValueClass =
+  'pointer-events-none absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs font-medium whitespace-nowrap tabular-nums text-popover-foreground shadow-md in-data-dragging:block'
+
 export const sliderRowClass = 'flex flex-col gap-2 w-full'
 
 export const sliderHeaderClass = 'flex items-center justify-between'
@@ -666,6 +670,7 @@ export type StyledViewInputs = Readonly<{
   orientation?: Orientation
   label?: string
   formatValue?: (value: number) => string
+  showsValueWhileDragging?: boolean
   ariaLabel?: string
   ariaLabelledBy?: string
   isDisabled?: boolean
@@ -715,6 +720,14 @@ export const styledViewInputs = <M>(
               ],
             )
 
+      const maybeDragValue: Html =
+        viewInputs.showsValueWhileDragging === true && viewInputs.formatValue !== undefined
+          ? h.span(
+              [h.AriaHidden(true), h.Class(sliderDragValueClass)],
+              [viewInputs.formatValue(viewInputs.value)],
+            )
+          : h.empty
+
       const maybeHiddenInput: Html =
         attributes.hiddenInput.length > 0 ? h.input([...attributes.hiddenInput]) : h.empty
 
@@ -743,11 +756,14 @@ export const styledViewInputs = <M>(
                   ]),
                 ],
               ),
-              h.div([
-                ...attributes.thumb,
-                h.DataAttribute('slot', 'slider-thumb'),
-                h.Class(cn(sliderThumbClass, viewInputs.thumbClass)),
-              ]),
+              h.div(
+                [
+                  ...attributes.thumb,
+                  h.DataAttribute('slot', 'slider-thumb'),
+                  h.Class(cn(sliderThumbClass, viewInputs.thumbClass)),
+                ],
+                [maybeDragValue],
+              ),
             ],
           ),
           maybeHiddenInput,

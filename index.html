@@ -9,10 +9,10 @@
     <meta name="theme-color" content="#0d0f18" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta
-      name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
-    />
+    <!-- black-translucent makes iOS 26 stop an installed app one status bar short
+         of the screen bottom, and blur the content under the status bar. iOS reads
+         this tag at install, so a change needs the app re-added to the Home Screen. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Lights" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />

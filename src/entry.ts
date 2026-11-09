@@ -9,11 +9,10 @@ import {
   subscriptions,
   update,
 } from './main'
-import { startInstalledAppHeight, startServiceWorker } from './pwa'
+import { startServiceWorker } from './pwa'
 import { registerSheetGrabberElement } from './sheetGrabber'
 import { view } from './view'
 
-startInstalledAppHeight()
 registerHouseSceneElement()
 registerSheetGrabberElement()
 

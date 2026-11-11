@@ -34,7 +34,6 @@ import {
   WebGLCubeRenderTarget,
   WebGLRenderer,
 } from 'three'
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 import {
@@ -45,6 +44,12 @@ import {
   roomById,
   wallSpans,
 } from './house'
+import {
+  type Orbit,
+  type OrbitLimits,
+  clampTarget,
+  createOrbitGestures,
+} from './houseControls'
 import {
   type Furniture,
   HOUSE_DEPTH,
@@ -74,7 +79,8 @@ const FLIGHT_MS = 950
 
 const MIN_POLAR_ANGLE = 0.1
 const MAX_POLAR_ANGLE = 1.25
-const ROTATE_DAMPING = 0.09
+const POSE_EPSILON = 1e-4
+const OFFSET_EPSILON_PX = 0.5
 const OVERVIEW_MIN_ZOOM = 0.45
 const OVERVIEW_MAX_ZOOM = 1.25
 const ROOM_MIN_ZOOM = 0.55
@@ -122,8 +128,6 @@ const FADE_EPSILON = 0.004
 const FULL_ORB_LEVEL = 0.3
 const LEVEL_BLOOM_POWER = 0.85
 
-const TAP_SLOP_PX = 10
-const TAP_MAX_MS = 450
 const BULB_TAP_RADIUS_PX = 26
 const BULB_RENDER_ORDER = 1
 const HALO_TEXTURE_PX = 128
@@ -341,13 +345,6 @@ type BulbVisual = {
   currentLevel: number
 }
 
-type TapStart = Readonly<{
-  pointerId: number
-  x: number
-  y: number
-  time: number
-}>
-
 type Insets = Readonly<{ top: number; right: number; bottom: number }>
 
 type CameraPose = Readonly<{
@@ -363,6 +360,14 @@ type Flight = Readonly<{
   from: CameraPose
   to: CameraPose
   durationMs: number
+}>
+
+// NOTE: The pose that frames the focused room, or the whole house, around the
+// panels on screen. Zoom limits are fractions of its distance.
+type Home = Readonly<{
+  pose: CameraPose
+  roomId: Option.Option<RoomId>
+  bounds: Bounds
 }>
 
 type Bounds = Readonly<{
@@ -966,6 +971,7 @@ export const createHouseScene = (
   canvas.style.display = 'block'
   canvas.style.width = '100%'
   canvas.style.height = '100%'
+  canvas.style.touchAction = 'none'
   host.append(canvas)
 
   const scene = new Scene()
@@ -975,12 +981,12 @@ export const createHouseScene = (
     CAMERA_NEAR,
     CAMERA_FAR,
   )
-  const controls = new OrbitControls(camera, canvas)
-  controls.enablePan = false
-  controls.enableDamping = true
-  controls.dampingFactor = ROTATE_DAMPING
-  controls.minPolarAngle = MIN_POLAR_ANGLE
-  controls.maxPolarAngle = MAX_POLAR_ANGLE
+  const orbit: Orbit = {
+    target: new Vector3(),
+    distance: 1,
+    polar: OVERVIEW_POLAR,
+    azimuth: OVERVIEW_AZIMUTH,
+  }
 
   const geometry = houseGeometry()
   const bulbPositions = Array.makeBy(BULB_SLOTS, () => new Vector3())
@@ -1098,7 +1104,7 @@ export const createHouseScene = (
     hasFramed: boolean
     maybeFlight: Option.Option<Flight>
     flightStartedAt: number
-    maybePick: Option.Option<TapStart>
+    maybeHome: Option.Option<Home>
     focus: HouseFocus
     focusRoomId: Option.Option<RoomId>
     cutBounds: Bounds
@@ -1117,7 +1123,7 @@ export const createHouseScene = (
     hasFramed: false,
     maybeFlight: Option.none(),
     flightStartedAt: 0,
-    maybePick: Option.none(),
+    maybeHome: Option.none(),
     focus: HouseFocus.Overview(),
     focusRoomId: Option.none(),
     cutBounds: WHOLE_HOUSE,
@@ -1136,20 +1142,28 @@ export const createHouseScene = (
     camera.setViewOffset(width, height, offsetX, offsetY, width, height)
   }
 
-  const applyPose = (pose: CameraPose): void => {
-    controls.target.copy(pose.target)
+  const syncCamera = (): void => {
     camera.position
-      .setFromSphericalCoords(pose.distance, pose.polar, pose.azimuth)
-      .add(pose.target)
-    camera.lookAt(pose.target)
+      .setFromSphericalCoords(orbit.distance, orbit.polar, orbit.azimuth)
+      .add(orbit.target)
+    camera.lookAt(orbit.target)
+    camera.updateMatrixWorld()
+  }
+
+  const applyPose = (pose: CameraPose): void => {
+    orbit.target.copy(pose.target)
+    orbit.distance = pose.distance
+    orbit.polar = pose.polar
+    orbit.azimuth = pose.azimuth
+    syncCamera()
     applyOffset(pose.offsetX, pose.offsetY)
   }
 
   const currentPose = (): CameraPose => ({
-    target: controls.target.clone(),
-    distance: camera.position.distanceTo(controls.target),
-    polar: controls.getPolarAngle(),
-    azimuth: controls.getAzimuthalAngle(),
+    target: orbit.target.clone(),
+    distance: orbit.distance,
+    polar: orbit.polar,
+    azimuth: orbit.azimuth,
     offsetX: state.offsetX,
     offsetY: state.offsetY,
   })
@@ -1172,7 +1186,7 @@ export const createHouseScene = (
       : { top: ROOM_TOP_INSET_PX, right: 0, bottom: panel.offsetHeight }
   }
 
-  const poseForFocus = (azimuth: number): CameraPose => {
+  const homeForFocus = (azimuth: number): Home => {
     const width = host.clientWidth
     const height = host.clientHeight
     const insets = panelInsets()
@@ -1184,54 +1198,121 @@ export const createHouseScene = (
     const polar = Option.isSome(maybeRoom) ? ROOM_POLAR : OVERVIEW_POLAR
     const target = boundsCenter(bounds)
     return {
-      target,
-      polar,
-      azimuth,
-      distance: fittingDistance(
-        bounds,
+      roomId: state.focusRoomId,
+      bounds,
+      pose: {
         target,
         polar,
         azimuth,
-        width,
-        height,
-        insets,
-      ),
-      offsetX: insets.right / 2,
-      offsetY: (insets.bottom - insets.top) / 2,
+        distance: fittingDistance(
+          bounds,
+          target,
+          polar,
+          azimuth,
+          width,
+          height,
+          insets,
+        ),
+        offsetX: insets.right / 2,
+        offsetY: (insets.bottom - insets.top) / 2,
+      },
     }
   }
 
-  const setZoomLimits = (distance: number): void => {
-    const isInRoom = Option.isSome(state.focusRoomId)
-    controls.minDistance =
-      distance * (isInRoom ? ROOM_MIN_ZOOM : OVERVIEW_MIN_ZOOM)
-    controls.maxDistance =
-      distance * (isInRoom ? ROOM_MAX_ZOOM : OVERVIEW_MAX_ZOOM)
+  const limitsOf = (home: Home): OrbitLimits => {
+    const isInRoom = Option.isSome(home.roomId)
+    const { distance } = home.pose
+    return {
+      minDistance: distance * (isInRoom ? ROOM_MIN_ZOOM : OVERVIEW_MIN_ZOOM),
+      maxDistance: distance * (isInRoom ? ROOM_MAX_ZOOM : OVERVIEW_MAX_ZOOM),
+      minPolar: MIN_POLAR_ANGLE,
+      maxPolar: MAX_POLAR_ANGLE,
+      home: home.pose.target,
+      homeDistance: distance,
+      reachX: (home.bounds.maxX - home.bounds.minX) / 2,
+      reachZ: (home.bounds.maxZ - home.bounds.minZ) / 2,
+    }
   }
+
+  const setHome = (home: Home): void => {
+    state.maybeHome = Option.some(home)
+    gestures.setLimits(limitsOf(home))
+  }
+
+  // NOTE: When the focus stays in the same room but the framing changes, such
+  // as a taller sheet or a resized window, the user's own zoom, tilt, and
+  // pivot carry over to the new framing instead of snapping back to it.
+  const carriedPose = (
+    view: CameraPose,
+    previous: Home,
+    next: Home,
+  ): CameraPose => {
+    const limits = limitsOf(next)
+    const distance = Math.min(
+      limits.maxDistance,
+      Math.max(
+        limits.minDistance,
+        (view.distance / previous.pose.distance) * next.pose.distance,
+      ),
+    )
+    const target = view.target
+      .clone()
+      .sub(previous.pose.target)
+      .add(next.pose.target)
+    return {
+      target: clampTarget(target, distance, limits),
+      distance,
+      polar: view.polar,
+      azimuth: view.azimuth,
+      offsetX: next.pose.offsetX,
+      offsetY: next.pose.offsetY,
+    }
+  }
+
+  const isSameRoom = (home: Home): boolean =>
+    Option.getOrNull(home.roomId) === Option.getOrNull(state.focusRoomId)
+
+  // NOTE: Where the camera is headed: the end of a flight in progress, or
+  // where it is now.
+  const settledPose = (): CameraPose =>
+    Option.match(state.maybeFlight, {
+      onNone: currentPose,
+      onSome: flight => flight.to,
+    })
+
+  const isSamePose = (a: CameraPose, b: CameraPose): boolean =>
+    a.target.distanceTo(b.target) < POSE_EPSILON &&
+    Math.abs(a.distance - b.distance) < POSE_EPSILON * b.distance &&
+    Math.abs(a.polar - b.polar) < POSE_EPSILON &&
+    Math.abs(shortestAngle(a.azimuth, b.azimuth)) < POSE_EPSILON &&
+    Math.abs(a.offsetX - b.offsetX) < OFFSET_EPSILON_PX &&
+    Math.abs(a.offsetY - b.offsetY) < OFFSET_EPSILON_PX
 
   const startFlight = (
     from: CameraPose,
     to: CameraPose,
     durationMs: number,
   ): void => {
+    gestures.stop()
     if (reducedMotion.matches) {
+      state.maybeFlight = Option.none()
       applyPose(to)
-      setZoomLimits(to.distance)
       requestFrame()
       return
     }
-    controls.minDistance = 0
-    controls.maxDistance = Number.POSITIVE_INFINITY
-    controls.enabled = false
     state.flightStartedAt = 0
     state.maybeFlight = Option.some({ from, to, durationMs })
     requestFrame()
   }
 
-  const endFlight = (flight: Flight): void => {
-    state.maybeFlight = Option.none()
-    controls.enabled = true
-    setZoomLimits(flight.to.distance)
+  // NOTE: A touch or the wheel during a flight lands it at once, so the gesture
+  // takes over from a settled view instead of from a camera frozen midway.
+  const finishFlight = (): void => {
+    Option.map(state.maybeFlight, flight => {
+      state.maybeFlight = Option.none()
+      applyPose(flight.to)
+      requestFrame()
+    })
   }
 
   const advanceFlight = (now: number): boolean =>
@@ -1256,7 +1337,7 @@ export const createHouseScene = (
           offsetY: mix(from.offsetY, to.offsetY, eased),
         })
         if (progress >= 1) {
-          endFlight(flight)
+          state.maybeFlight = Option.none()
           return false
         }
         return true
@@ -1264,8 +1345,19 @@ export const createHouseScene = (
     })
 
   const flyToFocus = (): void => {
-    const from = currentPose()
-    startFlight(from, poseForFocus(from.azimuth), FLIGHT_MS)
+    const view = settledPose()
+    const home = homeForFocus(view.azimuth)
+    const maybePrevious = Option.filter(state.maybeHome, isSameRoom)
+    setHome(home)
+    const to = Option.match(maybePrevious, {
+      onNone: () => home.pose,
+      onSome: previous => carriedPose(view, previous, home),
+    })
+    if (Option.isNone(state.maybeFlight) && isSamePose(to, view)) {
+      requestFrame()
+      return
+    }
+    startFlight(currentPose(), to, FLIGHT_MS)
   }
 
   const scheduleFlightAfterLayout = (): void => {
@@ -1444,7 +1536,7 @@ export const createHouseScene = (
     Option.map(Option.flatMap(state.focusRoomId, roomById), room => {
       state.cutBounds = boundsOfRoom(room)
     })
-    const azimuth = controls.getAzimuthalAngle()
+    const { azimuth } = orbit
     const towardX = Math.sin(azimuth)
     const towardZ = Math.cos(azimuth)
     const open = (1 - uniforms.focusMix.value ** 2) * CUT_OPEN_DISTANCE
@@ -1530,7 +1622,8 @@ export const createHouseScene = (
     )
     state.lastFrameAt = now
     const isFlying = advanceFlight(now)
-    const isMoving = isFlying ? false : controls.update()
+    const isMoving = isFlying ? false : gestures.step(dt)
+    syncCamera()
     const fadeAmount = 1 - Math.exp(-dt / FADE_MS)
     const isFading = Array.reduce(
       allVisuals(),
@@ -1563,22 +1656,28 @@ export const createHouseScene = (
     camera.updateProjectionMatrix()
     if (!state.hasFramed) {
       state.hasFramed = true
-      const settled = poseForFocus(OVERVIEW_AZIMUTH)
-      setZoomLimits(settled.distance)
+      const home = homeForFocus(OVERVIEW_AZIMUTH)
+      setHome(home)
       applyPose({
-        ...settled,
-        distance: settled.distance * INTRO_DISTANCE_FACTOR,
+        ...home.pose,
+        distance: home.pose.distance * INTRO_DISTANCE_FACTOR,
         polar: INTRO_POLAR,
         azimuth: OVERVIEW_AZIMUTH + INTRO_AZIMUTH_OFFSET,
       })
-      startFlight(currentPose(), settled, INTRO_MS)
+      startFlight(currentPose(), home.pose, INTRO_MS)
       return
     }
+    const view = settledPose()
     state.maybeFlight = Option.none()
-    controls.enabled = true
-    const pose = poseForFocus(controls.getAzimuthalAngle())
-    setZoomLimits(pose.distance)
-    applyPose(pose)
+    const home = homeForFocus(view.azimuth)
+    const maybePrevious = Option.filter(state.maybeHome, isSameRoom)
+    setHome(home)
+    applyPose(
+      Option.match(maybePrevious, {
+        onNone: () => home.pose,
+        onSome: previous => carriedPose(view, previous, home),
+      }),
+    )
   }
 
   const resize = (): void => {
@@ -1651,41 +1750,6 @@ export const createHouseScene = (
     }
   }
 
-  const handlePointerDown = (event: PointerEvent): void => {
-    Option.map(state.maybeFlight, endFlight)
-    state.maybePick =
-      event.isPrimary && Option.isNone(state.maybePick)
-        ? Option.some({
-            pointerId: event.pointerId,
-            x: event.clientX,
-            y: event.clientY,
-            time: event.timeStamp,
-          })
-        : Option.none()
-  }
-
-  const handlePointerUp = (event: PointerEvent): void => {
-    const maybeStart = state.maybePick
-    state.maybePick = Option.none()
-    if (Option.isNone(maybeStart)) {
-      return
-    }
-    const start = maybeStart.value
-    const isTap =
-      start.pointerId === event.pointerId &&
-      Math.hypot(event.clientX - start.x, event.clientY - start.y) <=
-        TAP_SLOP_PX &&
-      event.timeStamp - start.time <= TAP_MAX_MS
-    if (isTap) {
-      const bounds = canvas.getBoundingClientRect()
-      handleTap(event.clientX - bounds.left, event.clientY - bounds.top)
-    }
-  }
-
-  const handlePointerCancel = (): void => {
-    state.maybePick = Option.none()
-  }
-
   const handleContextLost = (event: Event): void => {
     event.preventDefault()
   }
@@ -1695,12 +1759,19 @@ export const createHouseScene = (
     requestFrame()
   }
 
-  canvas.addEventListener('pointerdown', handlePointerDown)
-  canvas.addEventListener('pointerup', handlePointerUp)
-  canvas.addEventListener('pointercancel', handlePointerCancel)
   canvas.addEventListener('webglcontextlost', handleContextLost)
   canvas.addEventListener('webglcontextrestored', handleContextRestored)
-  controls.addEventListener('change', requestFrame)
+
+  const gestures = createOrbitGestures({
+    element: anchorRoot,
+    camera,
+    orbit,
+    syncCamera,
+    isFlying: () => Option.isSome(state.maybeFlight),
+    onGestureStart: finishFlight,
+    onChange: requestFrame,
+    onTap: handleTap,
+  })
 
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(host)
@@ -1749,13 +1820,9 @@ export const createHouseScene = (
       cancelAnimationFrame(state.panelMeasureId)
       resizeObserver.disconnect()
       anchorObserver.disconnect()
-      canvas.removeEventListener('pointerdown', handlePointerDown)
-      canvas.removeEventListener('pointerup', handlePointerUp)
-      canvas.removeEventListener('pointercancel', handlePointerCancel)
       canvas.removeEventListener('webglcontextlost', handleContextLost)
       canvas.removeEventListener('webglcontextrestored', handleContextRestored)
-      controls.removeEventListener('change', requestFrame)
-      controls.dispose()
+      gestures.dispose()
       disposeObject(scene)
       disposeObject(shadowScene)
       Array.forEach(shadowTargets, ({ target }) => {

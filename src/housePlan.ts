@@ -66,10 +66,13 @@ const WINDOW_HEIGHT = 0.8
 const LANTERN_ELEVATION = 1.55
 const LANTERN_HEIGHT = 0.38
 const LANTERN_RADIUS = 0.13
+const LANTERN_RING_HEIGHT = 0.03
+const LANTERN_RING_LIP = 0.005
 const TREAD_COUNT = 9
 const TREAD_RUN = 0.25
 const TREAD_RISE = 0.25
 const NOSING_HEIGHT = 0.03
+const NOSING_OVERHANG = 0.02
 
 // MODEL
 
@@ -212,7 +215,7 @@ const northWindow = (x: number, width: number): ReadonlyArray<Furniture> => [
     WHITE_HEX,
     SILL_ELEVATION - 0.1,
   ),
-  box(x, 0, width, 0.05, WINDOW_HEIGHT, GLASS_HEX, SILL_ELEVATION),
+  box(x, 0.01, width, 0.04, WINDOW_HEIGHT, GLASS_HEX, SILL_ELEVATION),
   box(x - 0.04, 0, width + 0.08, 0.2, 0.03, WHITE_HEX, SILL_ELEVATION - 0.03),
 ]
 
@@ -228,14 +231,21 @@ const wallArt = (
 
 const lanternPendant = (x: number, z: number): ReadonlyArray<Furniture> => [
   round(x, z, LANTERN_RADIUS, LANTERN_HEIGHT, SHADE_HEX, LANTERN_ELEVATION),
-  round(x, z, LANTERN_RADIUS + 0.015, 0.03, STEEL_HEX, LANTERN_ELEVATION),
   round(
     x,
     z,
     LANTERN_RADIUS + 0.015,
-    0.03,
+    LANTERN_RING_HEIGHT,
     STEEL_HEX,
-    LANTERN_ELEVATION + LANTERN_HEIGHT - 0.03,
+    LANTERN_ELEVATION - LANTERN_RING_LIP,
+  ),
+  round(
+    x,
+    z,
+    LANTERN_RADIUS + 0.015,
+    LANTERN_RING_HEIGHT,
+    STEEL_HEX,
+    LANTERN_ELEVATION + LANTERN_HEIGHT + LANTERN_RING_LIP - LANTERN_RING_HEIGHT,
   ),
   round(
     x,
@@ -268,9 +278,9 @@ const stairTread = (index: number): ReadonlyArray<Furniture> => {
   return [
     box(x, KITCHEN_SOUTH + 0.04, TREAD_RUN, 0.92, height, WHITE_HEX),
     box(
-      x - 0.02,
+      x,
       KITCHEN_SOUTH + 0.04,
-      TREAD_RUN + 0.02,
+      TREAD_RUN + NOSING_OVERHANG,
       0.92,
       NOSING_HEIGHT,
       BRONZE_HEX,
@@ -340,10 +350,10 @@ const LIVING_ROOM: HouseRoom = {
       SILL_ELEVATION + SHROOM_STEM_HEIGHT,
       0.5,
     ),
-    box(4.2, 0.04, 0.42, 0.15, 0.12, BOOK_RED_HEX, SILL_ELEVATION),
-    box(6.98, 0.04, 0.46, 0.15, 0.2, BOOK_TEAL_HEX, SILL_ELEVATION),
+    box(4.2, 0.05, 0.42, 0.15, 0.12, BOOK_RED_HEX, SILL_ELEVATION),
+    box(6.98, 0.05, 0.46, 0.15, 0.2, BOOK_TEAL_HEX, SILL_ELEVATION),
     wallArt(5.42, 0, 0.8, 0.04, 1.15, 0.92),
-    box(4.85, 0.25, 2.9, 0.9, 0.42, SOFA_HEX),
+    box(4.97, 0.27, 2.53, 0.88, 0.42, SOFA_HEX),
     box(4.85, 0.05, 2.9, 0.22, 0.8, SOFA_BACK_HEX),
     box(6.85, 1.15, 0.65, 1.2, 0.42, SOFA_HEX),
     box(7.5, 0.27, 0.25, 2.08, 0.8, SOFA_BACK_HEX),
@@ -406,7 +416,15 @@ const KITCHEN: HouseRoom = {
   furniture: [
     box(5.5, 3.9, 2.3, 0.8, COUNTER_HEIGHT, CABINET_HEX),
     box(5.45, 3.66, 2.35, 1.06, COUNTER_THICKNESS, QUARTZ_HEX, COUNTER_HEIGHT),
-    box(7.3, 3.95, 0.48, 0.4, 0.3, WHITE_HEX, COUNTER_HEIGHT),
+    box(
+      7.3,
+      3.95,
+      0.48,
+      0.4,
+      0.3,
+      WHITE_HEX,
+      COUNTER_HEIGHT + COUNTER_THICKNESS,
+    ),
     ...barStool(LESS_WOBBLY_PENDANT_X, STOOL_Z),
     ...barStool(MORE_WOBBLY_PENDANT_X, STOOL_Z),
     ...lanternPendant(LESS_WOBBLY_PENDANT_X, PENDANT_Z),
@@ -643,7 +661,7 @@ const BATHROOM: HouseRoom = {
     box(3.36, BEDROOM_DEPTH + 0.05, 0.22, 0.4, 0.85, WHITE_HEX),
 
     box(0, 5.02, 0.03, 0.66, 1, WHITE_HEX, 1.05),
-    box(0, 5.1, 0.05, 0.5, 0.8, GLASS_HEX, 1.15),
+    box(0.01, 5.1, 0.04, 0.5, 0.8, GLASS_HEX, 1.15),
     box(0.05, 5.26, 0.36, 0.42, 0.68, FRAME_HEX),
 
     box(
@@ -713,7 +731,7 @@ const BATHROOM: HouseRoom = {
     wallArt(1.8, FAR_WALL_ART_Z, 0.32, 0.03, 0.42, 1.25, GOLD_HEX),
     wallArt(2.32, FAR_WALL_ART_Z, 0.3, 0.03, 0.38, 1.55, STEEL_HEX),
     box(3.54, 6.35, 0.03, 0.5, 0.02, STEEL_HEX, 1.15),
-    box(3.52, 6.38, 0.06, 0.44, 0.7, PILLOW_HEX, 0.47),
+    box(3.52, 6.38, 0.06, 0.44, 0.69, PILLOW_HEX, 0.47),
   ],
   lightSpots: [
     {

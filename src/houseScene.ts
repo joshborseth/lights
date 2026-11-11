@@ -98,6 +98,7 @@ const WALL_HEX = '#d2cdc5'
 const WALL_CAP_HEX = '#b9b6b1'
 const WALL_CAP_THICKNESS = 0.13
 const WALL_CAP_BEVEL = 0.02
+const WALL_FACE_INSET = 0.005
 const CAP_UNLIT_SHADE = 0.34
 const WALL_SHELL_HEX = '#94a3c8'
 const WALL_SHELL_OPACITY = 0.06
@@ -133,8 +134,8 @@ const GROUND_GLOW_STRENGTH = 0.2
 const SHADOW_MAP_PX = 384
 const SHADOW_NEAR = 0.5
 const SHADOW_RANGE = 16
-const SHADOW_TAPS_AT_REST = 8
-const SHADOW_TAPS_IN_MOTION = 3
+const SHADOW_TAPS = 8
+const SHADOW_PROBES = 4
 
 const CONTACT_TEXTURE_PX = 1024
 const CONTACT_MARGIN = 1
@@ -201,7 +202,7 @@ const bulbSlotLines = Array.join(
   Array.makeBy(
     BULB_SLOTS,
     index =>
-      `if (bulbCount > ${index}) { received += shade(bulbPositions[${index}], bulbColors[${index}], bulbSpaces[${index}], shadowMaps[${index}], normal, rotation); }`,
+      `if (bulbCount > ${index}) { received += shade(bulbPositions[${index}], bulbColors[${index}], bulbSpaces[${index}], shadowMaps[${index}], normal); }`,
   ),
   '\n',
 )
@@ -215,7 +216,6 @@ const HOUSE_FRAGMENT_SHADER = `
   uniform float bulbSpaces[${BULB_SLOTS}];
   uniform samplerCube shadowMaps[${BULB_SLOTS}];
   uniform int bulbCount;
-  uniform int shadowTaps;
   uniform float focusRoom;
   uniform float focusMix;
   uniform sampler2D contactShadows;
@@ -228,24 +228,46 @@ const HOUSE_FRAGMENT_SHADER = `
   varying float vRoomIndex;
   varying float vLightSpace;
 
-  float visibility(samplerCube map, vec3 fromBulb, float distanceToBulb, float bias, float rotation) {
+  // NOTE: Soft shadows average fixed taps around the bulb direction, so each
+  // point's result depends only on where it is and holds still as the camera
+  // moves. The outer taps go first, and only a penumbra pays for the rest.
+  float blockedAt(samplerCube map, vec3 direction, vec3 tangent, vec3 bitangent, float distanceToBulb, float bias, int tap) {
+    float angle = float(tap) * 2.39996;
+    float reach = sqrt((float(tap) + 0.5) / ${SHADOW_TAPS}.0) * 0.016;
+    vec3 sampleDirection = direction + (tangent * cos(angle) + bitangent * sin(angle)) * reach;
+    vec4 packedDepth = textureCube(map, sampleDirection);
+    float stored = (packedDepth.r + packedDepth.g / 255.0) * ${SHADOW_RANGE}.0;
+    return step(stored + bias, distanceToBulb);
+  }
+
+  float visibility(samplerCube map, vec3 fromBulb, float distanceToBulb, float bias) {
     vec3 direction = fromBulb / distanceToBulb;
     vec3 axis = abs(direction.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     vec3 tangent = normalize(cross(direction, axis));
     vec3 bitangent = cross(direction, tangent);
     float blocked = 0.0;
-    for (int tap = 0; tap < shadowTaps; tap++) {
-      float angle = float(tap) * 2.39996 + rotation;
-      float reach = sqrt((float(tap) + 0.5) / float(shadowTaps)) * 0.016;
-      vec3 sampleDirection = direction + (tangent * cos(angle) + bitangent * sin(angle)) * reach;
-      vec4 packedDepth = textureCube(map, sampleDirection);
-      float stored = (packedDepth.r + packedDepth.g / 255.0) * ${SHADOW_RANGE}.0;
-      blocked += step(stored + bias, distanceToBulb);
+    for (int tap = ${SHADOW_TAPS - SHADOW_PROBES}; tap < ${SHADOW_TAPS}; tap++) {
+      blocked += blockedAt(map, direction, tangent, bitangent, distanceToBulb, bias, tap);
     }
-    return 1.0 - blocked / float(shadowTaps);
+    if (blocked == 0.0 || blocked == ${SHADOW_PROBES}.0) {
+      return 1.0 - blocked / ${SHADOW_PROBES}.0;
+    }
+    for (int tap = 0; tap < ${SHADOW_TAPS - SHADOW_PROBES}; tap++) {
+      blocked += blockedAt(map, direction, tangent, bitangent, distanceToBulb, bias, tap);
+    }
+    return 1.0 - blocked / ${SHADOW_TAPS}.0;
   }
 
-  vec3 shade(vec3 bulbPosition, vec3 bulbColor, float bulbSpace, samplerCube map, vec3 normal, float rotation) {
+  // NOTE: Box-filters a repeating groove over the pixel's footprint. A groove
+  // thinner than a pixel would otherwise blink on and off as the camera moves.
+  float groove(float coordinate, float footprint, float halfWidth) {
+    float width = max(footprint, 0.0001);
+    float distanceToLine = abs(fract(coordinate + 0.5) - 0.5);
+    float covered = clamp(min(halfWidth, distanceToLine + width * 0.5) - max(-halfWidth, distanceToLine - width * 0.5), 0.0, width) / width;
+    return mix(covered, halfWidth * 2.0, smoothstep(0.25, 0.5, width));
+  }
+
+  vec3 shade(vec3 bulbPosition, vec3 bulbColor, float bulbSpace, samplerCube map, vec3 normal) {
     if (dot(bulbColor, bulbColor) < 0.00001) {
       return vec3(0.0);
     }
@@ -255,7 +277,7 @@ const HOUSE_FRAGMENT_SHADER = `
     float facing = max(dot(normal, toBulb / distanceToBulb), 0.0);
     float falloff = 1.0 / (1.0 + 0.62 * squaredDistance);
     float bias = 0.04 + 0.1 * (1.0 - facing);
-    float visible = facing > 0.0 ? visibility(map, -toBulb, distanceToBulb, bias, rotation) : 0.0;
+    float visible = facing > 0.0 ? visibility(map, -toBulb, distanceToBulb, bias) : 0.0;
     float isSameSpace = step(abs(bulbSpace - vLightSpace), 0.5);
     float fill = isSameSpace * 0.16 * (0.72 + 0.28 * normal.y) / (1.0 + 0.22 * squaredDistance);
     float glow = smoothstep(0.62, 0.1, distanceToBulb) * 1.8;
@@ -268,7 +290,6 @@ const HOUSE_FRAGMENT_SHADER = `
       discard;
     }
     vec3 normal = normalize(vNormal);
-    float rotation = 6.28318 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     float skyFacing = 0.55 + 0.45 * normal.y;
     vec3 received = vec3(0.075, 0.1, 0.19) * skyFacing;
 
@@ -279,9 +300,9 @@ const HOUSE_FRAGMENT_SHADER = `
     float plankRow = floor(vWorldPosition.z * 5.4);
     float plankTint = fract(sin(plankRow * 91.7) * 43758.5453);
     float plankOffset = plankTint * 3.0;
-    float endJoint = smoothstep(0.0, 0.012, fract(vWorldPosition.x * 0.55 + plankOffset));
-    float seam = smoothstep(0.0, 0.05, fract(vWorldPosition.z * 5.4));
-    float planks = (0.86 + 0.14 * plankTint) * (0.8 + 0.2 * seam) * (0.86 + 0.14 * endJoint);
+    float endJoint = groove(vWorldPosition.x * 0.55 + plankOffset, fwidth(vWorldPosition.x * 0.55), 0.006);
+    float seam = groove(vWorldPosition.z * 5.4, fwidth(vWorldPosition.z * 5.4), 0.02);
+    float planks = (0.86 + 0.14 * plankTint) * (1.0 - 0.2 * seam) * (1.0 - 0.14 * endJoint);
     vec2 contactPoint = (vWorldPosition.xz - contactArea.xy) / contactArea.zw;
     float contact = texture2D(contactShadows, contactPoint).r;
     float wallFoot = 0.68 + 0.32 * smoothstep(0.0, 0.42, vWorldPosition.y);
@@ -407,6 +428,10 @@ const floorGeometry = (area: RoomArea, hex: string): BufferGeometry =>
 
 const SIDES: ReadonlyArray<WallSide> = ['North', 'South', 'East', 'West']
 
+// NOTE: Walls have no thickness, so each room draws its own one-sided face of a
+// shared wall. Each face sits a few millimetres inside its own room. Otherwise a
+// picture or cabinet hung flush on one side would share a plane with the next
+// room's wall face and flicker through it as the camera moves.
 const wallQuad = (
   room: RoomArea,
   side: WallSide,
@@ -417,17 +442,21 @@ const wallQuad = (
   const middle = (from + to) / 2
   const height = WALL_HEIGHT / 2
   if (side === 'North') {
-    return quad.translate(middle, height, room.z)
+    return quad.translate(middle, height, room.z + WALL_FACE_INSET)
   }
   if (side === 'South') {
-    return quad.rotateY(Math.PI).translate(middle, height, room.z + room.depth)
+    return quad
+      .rotateY(Math.PI)
+      .translate(middle, height, room.z + room.depth - WALL_FACE_INSET)
   }
   if (side === 'West') {
-    return quad.rotateY(Math.PI / 2).translate(room.x, height, middle)
+    return quad
+      .rotateY(Math.PI / 2)
+      .translate(room.x + WALL_FACE_INSET, height, middle)
   }
   return quad
     .rotateY(-Math.PI / 2)
-    .translate(room.x + room.width, height, middle)
+    .translate(room.x + room.width - WALL_FACE_INSET, height, middle)
 }
 
 const wallCap = (
@@ -547,7 +576,7 @@ const roomGeometry = (room: HouseRoom, roomIndex: number): BufferGeometry =>
     lightSpaceOf(room),
   )
 
-const houseGeometry = (): BufferGeometry =>
+export const houseGeometry = (): BufferGeometry =>
   mergedOrThrow(Array.map(ROOMS, roomGeometry))
 
 const addHouseShell = (
@@ -967,7 +996,6 @@ export const createHouseScene = (
     bulbSpaces: { value: bulbSpaces },
     shadowMaps: { value: shadowMaps },
     bulbCount: { value: 0 },
-    shadowTaps: { value: SHADOW_TAPS_AT_REST },
     focusRoom: { value: -1 },
     focusMix: { value: 0 },
     contactShadows: {
@@ -1500,8 +1528,6 @@ export const createHouseScene = (
     applyCut()
     applyBulbLights()
     bakeShadows()
-    uniforms.shadowTaps.value =
-      isFlying || isMoving ? SHADOW_TAPS_IN_MOTION : SHADOW_TAPS_AT_REST
     renderer.setRenderTarget(null)
     renderer.render(scene, camera)
     placeAnchors()

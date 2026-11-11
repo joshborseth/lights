@@ -26,6 +26,12 @@ import {
   sharedHours,
   withSameHours,
 } from './automation'
+import {
+  MUSIC_API_PATH,
+  MusicConfig,
+  MusicSnapshot,
+  MusicSnapshotValue,
+} from './music'
 
 // MODEL
 
@@ -35,6 +41,13 @@ export const Remote = defineTaggedUnion({
   Loaded: { snapshot: SnapshotValue },
 })
 export type Remote = typeof Remote.Type
+
+export const MusicRemote = defineTaggedUnion({
+  Loading: {},
+  Unavailable: { reason: Schema.String },
+  Loaded: { snapshot: MusicSnapshotValue },
+})
+export type MusicRemote = typeof MusicRemote.Type
 
 export const SaveState = defineTaggedUnion({
   Idle: {},
@@ -72,6 +85,7 @@ export const Screen = defineTaggedUnion({
   List: {},
   PrMerged: { maybeOpenSection: Schema.Option(PrMergedSection) },
   Connections: { maybeOpenSection: Schema.Option(ConnectionSection) },
+  Music: {},
 })
 export type Screen = typeof Screen.Type
 
@@ -98,6 +112,8 @@ export const Model = Schema.Struct({
   maybeRunningAction: Schema.Option(Action),
   maybeProblem: Schema.Option(Schema.String),
   maybeUnreachableReason: Schema.Option(Schema.String),
+  music: MusicRemote,
+  isSavingMusic: Schema.Boolean,
 })
 export type Model = typeof Model.Type
 
@@ -112,6 +128,8 @@ export const init: Model = {
   maybeRunningAction: Option.none(),
   maybeProblem: Option.none(),
   maybeUnreachableReason: Option.none(),
+  music: MusicRemote.Loading(),
+  isSavingMusic: false,
 }
 
 // MESSAGE
@@ -135,6 +153,11 @@ export const Message = defineMessageUnion({
   FailedSaveDraft: { error: Schema.String },
   CompletedFollowGroupRename: { maybeSnapshot: Schema.Option(SnapshotValue) },
   FailedFollowGroupRename: { error: Schema.String },
+  SucceededFetchMusic: { snapshot: MusicSnapshotValue },
+  FailedFetchMusic: { error: Schema.String },
+  ChangedMusicConfig: { config: MusicConfig },
+  SucceededSaveMusic: { snapshot: MusicSnapshotValue },
+  FailedSaveMusic: { error: Schema.String },
 })
 export type Message = typeof Message.Type
 
@@ -147,10 +170,24 @@ const requestSnapshot = (
   path: string,
   init: RequestInit,
 ): Effect.Effect<typeof SnapshotValue.Type, string> =>
+  requestDecoded(`${AUTOMATION_API_PATH}${path}`, init, decodeSnapshot)
+
+const decodeMusicSnapshot = Schema.decodeUnknownEffect(MusicSnapshot)
+
+const requestMusic = (
+  path: string,
+  init: RequestInit,
+): Effect.Effect<typeof MusicSnapshotValue.Type, string> =>
+  requestDecoded(`${MUSIC_API_PATH}${path}`, init, decodeMusicSnapshot)
+
+const requestDecoded = <A, E>(
+  url: string,
+  init: RequestInit,
+  decode: (body: unknown) => Effect.Effect<A, E>,
+): Effect.Effect<A, string> =>
   Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: signal =>
-        fetch(`${AUTOMATION_API_PATH}${path}`, { ...init, signal }),
+      try: signal => fetch(url, { ...init, signal }),
       catch: () => 'the automations service is not responding',
     })
     const body = yield* Effect.tryPromise({
@@ -165,7 +202,7 @@ const requestSnapshot = (
         }),
       )
     }
-    return yield* decodeSnapshot(body).pipe(
+    return yield* decode(body).pipe(
       Effect.mapError(
         () => 'the automations service sent an unreadable answer',
       ),
@@ -216,6 +253,53 @@ export const SaveDraft = Command.define('SaveDraft', {
     sendJson('PUT', '/config', draft).pipe(
       Effect.map(snapshot => Message.SucceededSaveDraft({ snapshot })),
       Effect.catch(error => Effect.succeed(Message.FailedSaveDraft({ error }))),
+    ),
+})
+
+export const FetchMusic = Command.define('FetchMusic', {
+  messages: [Message.SucceededFetchMusic, Message.FailedFetchMusic],
+  execute: requestMusic('', {}).pipe(
+    Effect.map(snapshot => Message.SucceededFetchMusic({ snapshot })),
+    Effect.catch(error => Effect.succeed(Message.FailedFetchMusic({ error }))),
+  ),
+})
+
+const putMusicConfig = (config: MusicConfig) =>
+  requestMusic('/config', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+
+export const SaveMusic = Command.define('SaveMusic', {
+  args: { config: MusicConfig },
+  messages: [Message.SucceededSaveMusic, Message.FailedSaveMusic],
+  execute: ({ config }) =>
+    putMusicConfig(config).pipe(
+      Effect.map(snapshot => Message.SucceededSaveMusic({ snapshot })),
+      Effect.catch(error => Effect.succeed(Message.FailedSaveMusic({ error }))),
+    ),
+})
+
+// NOTE: Music colors also stores its group by name.
+export const FollowMusicGroupRename = Command.define('FollowMusicGroupRename', {
+  args: { from: Schema.String, to: Schema.String },
+  messages: [Message.SucceededSaveMusic, Message.FailedSaveMusic],
+  execute: ({ from, to }) =>
+    requestMusic('', {}).pipe(
+      Effect.flatMap(snapshot =>
+        snapshot.config.group === from
+          ? putMusicConfig({ ...snapshot.config, group: to })
+          : Effect.succeed(snapshot),
+      ),
+      Effect.map(snapshot => Message.SucceededSaveMusic({ snapshot })),
+      Effect.catch(error =>
+        Effect.succeed(
+          Message.FailedSaveMusic({
+            error: `couldn't point music colors at the renamed group: ${error}`,
+          }),
+        ),
+      ),
     ),
 })
 
@@ -283,7 +367,10 @@ export const renamedGroup = (
         draft.flash.group === from ? withFlashGroup(draft, to) : draft,
       ),
   }),
-  commands: [FollowGroupRename({ from, to })],
+  commands: [
+    FollowGroupRename({ from, to }),
+    FollowMusicGroupRename({ from, to }),
+  ],
 })
 
 const withSnapshot = (model: Model, snapshot: Snapshot): Model =>
@@ -391,7 +478,12 @@ export const update = (model: Model, message: Message) =>
       )
     },
 
-    TickedRefresh: () => ({ model, commands: [FetchSnapshot()] }),
+    TickedRefresh: () => ({
+      model,
+      commands: model.isSavingMusic
+        ? [FetchSnapshot()]
+        : [FetchSnapshot(), FetchMusic()],
+    }),
 
     SucceededFetchSnapshot: ({ snapshot }) => ({
       model: modifyFields(withSnapshot(model, snapshot), {
@@ -481,6 +573,61 @@ export const update = (model: Model, message: Message) =>
         onNone: () => model,
         onSome: snapshot => withSnapshot(model, snapshot),
       }),
+    }),
+
+    SucceededFetchMusic: ({ snapshot }) =>
+      model.isSavingMusic
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              music: () => MusicRemote.Loaded({ snapshot }),
+            }),
+          },
+
+    FailedFetchMusic: ({ error }) => ({
+      model: MusicRemote.match(model.music, {
+        Loaded: () => model,
+        Loading: () =>
+          modifyFields(model, {
+            music: () => MusicRemote.Unavailable({ reason: error }),
+          }),
+        Unavailable: () =>
+          modifyFields(model, {
+            music: () => MusicRemote.Unavailable({ reason: error }),
+          }),
+      }),
+    }),
+
+    // NOTE: Music settings save as soon as they change, with no save bar.
+    ChangedMusicConfig: ({ config }) =>
+      MusicRemote.match(model.music, {
+        Loading: () => ({ model }),
+        Unavailable: () => ({ model }),
+        Loaded: ({ snapshot }) => ({
+          model: modifyFields(model, {
+            music: () =>
+              MusicRemote.Loaded({ snapshot: { ...snapshot, config } }),
+            isSavingMusic: () => true,
+            maybeProblem: () => Option.none(),
+          }),
+          commands: [SaveMusic({ config })],
+        }),
+      }),
+
+    SucceededSaveMusic: ({ snapshot }) => ({
+      model: modifyFields(model, {
+        music: () => MusicRemote.Loaded({ snapshot }),
+        isSavingMusic: () => false,
+      }),
+    }),
+
+    FailedSaveMusic: ({ error }) => ({
+      model: modifyFields(model, {
+        isSavingMusic: () => false,
+        maybeProblem: () =>
+          Option.some(`Music colors weren't saved: ${error}.`),
+      }),
+      commands: [FetchMusic()],
     }),
 
     FailedFollowGroupRename: ({ error }) => ({

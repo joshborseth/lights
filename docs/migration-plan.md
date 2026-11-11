@@ -65,7 +65,7 @@ The Devices page pairs bulbs, renames and removes them, moves them between group
 - Each change is a plan of requests, sent one at a time. The next one goes out only when `bridge/response/*` reports the previous one succeeded. Requests carry a `transaction` tagged per app instance, so a second open app can't confirm them.
 - A device whose friendly name is still its address is waiting for setup. That comes from `bridge/devices`, so it survives a reload. The pairing window comes from the retained `bridge/info`.
 - Groups nest only through shared bulbs, so moving a bulb also updates the groups around its old and new room. `moveLightChange` and its neighbors in `src/domain.ts` hold those rules. Adding to an empty group changes only that group, because it has no place in the tree yet.
-- Renaming a group also updates the PR flash if it pointed at that group.
+- Renaming a group also updates the PR flash and Music colors if they pointed at that group.
 
 ### Automations service
 
@@ -87,6 +87,18 @@ Browser  --- /automations ---> lights-lan
 - GitHub logins come from `gh auth token --user <account>`, read once and refreshed on a 401. Unchanged event feeds use ETags, which do not count against the rate limit.
 - Writes must be JSON, which makes browsers preflight them. The service answers no preflights, so other sites cannot send commands.
 - A merge older than the catch-up window is recorded but never flashes, so downtime or a newly added account cannot replay old merges.
+
+#### Music colors
+
+While a song plays, the bulbs in one group take the colors of its album cover. The music server (`~/.t3/projects/music`, `music.service`) sends each song and up to four cover colors over a read-only WebSocket, `ws://127.0.0.1:4310/now-playing` (override with `MUSIC_FEED_URL`). `service/music.ts` listens there and reconnects every 5 seconds when it can't.
+
+- Off by default. Settings save as soon as they change, with no save bar, to `~/.config/pr-merge-lights/music.json`, and are served at `/automations/music`.
+- A song must stay current for 1.5 seconds before the bulbs follow it, so a run of skips doesn't flicker them. Each song is applied once; changing a setting applies it again to the song already playing.
+- Only bulbs that are on change. Brightness stays where it is. Colors go as x and y with no `transition`, pushed to at least 70% saturation because bulbs wash pale colors out to white. With Mix colors on, lit bulbs take the cover's first three colors in name order.
+- A black, white, or grey cover sends `color_temp` 370 (warm white) to bulbs that take color temperature.
+- Only on the TV (on by default) ignores music playing on a phone. A song skipped for that reason is applied when playback moves to the TV.
+- It stops an overlapping Rainbow the way the flash does: a group command in x and y, twice. It runs under the flash's lock, so neither one restores colors over the other.
+- Which bulbs take color or color temperature comes from `bridge/devices`, read the same way as the app's `toLight`.
 
 Deploy with `scripts/deploy-automations.sh`. The Python watcher it replaced was deleted on 2026-11-08. The 9 PM all-off timer still runs `~/pr-merge-lights/lights_off.py`, so keep that folder.
 

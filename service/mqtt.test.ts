@@ -118,3 +118,51 @@ describe('spotting a Rainbow loop', () => {
     expect(lights.activeRainbowGroups()).toEqual(['Bedroom'])
   })
 })
+
+describe('bulb capabilities', () => {
+  test('reads color and color temperature support from the device list', async () => {
+    const { fake, lights } = await setup()
+    const light = (name: string, features: ReadonlyArray<string>) => ({
+      ieee_address: `0x${name}`,
+      friendly_name: name,
+      definition: {
+        exposes: [
+          {
+            type: 'light',
+            features: features.map(feature => ({ name: feature })),
+          },
+        ],
+      },
+    })
+    fake.emit(
+      'message',
+      'zigbee2mqtt/bridge/devices',
+      Buffer.from(
+        JSON.stringify([
+          light('Orb', ['state', 'brightness', 'color_temp', 'color_xy']),
+          light('Kajplats', ['state', 'brightness', 'color_hs']),
+          light('Spot', ['state', 'brightness', 'color_temp']),
+          {
+            ieee_address: '0xremote',
+            friendly_name: 'Remote',
+            definition: { exposes: [] },
+          },
+        ]),
+      ),
+    )
+    expect(lights.capabilitiesOf('Orb')).toEqual({
+      supportsColor: true,
+      supportsColorTemp: true,
+    })
+    expect(lights.capabilitiesOf('Kajplats').supportsColor).toBe(true)
+    expect(lights.capabilitiesOf('Spot')).toEqual({
+      supportsColor: false,
+      supportsColorTemp: true,
+    })
+    expect(lights.capabilitiesOf('Remote')).toEqual({
+      supportsColor: false,
+      supportsColorTemp: false,
+    })
+    expect(lights.capabilitiesOf('Unknown').supportsColor).toBe(false)
+  })
+})

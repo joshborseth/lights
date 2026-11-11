@@ -7,9 +7,19 @@ import { makeAccountHealth, makeEngine } from './engine'
 import { MissingTokenError, makeGitHub } from './github'
 import { makeHandler } from './http'
 import { type LightsError, connectLights } from './mqtt'
-import { defaultPaths, loadInitial, makeStore, readMqttOptions } from './store'
+import { connectMusicFeed, makeMusicSync } from './music'
+import {
+  defaultPaths,
+  loadInitial,
+  makeStore,
+  readMqttOptions,
+  readMusicConfig,
+  saveMusicConfig,
+} from './store'
 
 const DEFAULT_PORT = 8093
+// NOTE: The music server on this machine (~/.t3/projects/music).
+const DEFAULT_MUSIC_FEED_URL = 'ws://127.0.0.1:4310/now-playing'
 const TOKEN_TIMEOUT_MS = 20_000
 const RESTART_DELAY_MS = 200
 
@@ -76,6 +86,21 @@ const program = Effect.gen(function* () {
     health,
   )
 
+  const music = yield* makeMusicSync(
+    {
+      lights,
+      withLightsLock: engine.withLightsLock,
+      saveConfig: saveMusicConfig(paths),
+      feed: connectMusicFeed(
+        process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL,
+        log,
+      ),
+      now: Clock.currentTimeMillis,
+      errorText: (error: LightsError) => error.reason,
+    },
+    yield* readMusicConfig(paths),
+  )
+
   const stopRequested = yield* Effect.callback<void>(resume => {
     const finish = () => resume(Effect.void)
     process.once('SIGTERM', finish)
@@ -93,6 +118,7 @@ const program = Effect.gen(function* () {
           return engine.saveConfig(config)
         },
       },
+      music,
       requestRestart: () => {
         setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS)
       },
@@ -102,9 +128,11 @@ const program = Effect.gen(function* () {
   log(`automations service listening on 127.0.0.1:${server.port}`)
 
   const watcher = yield* Effect.forkChild(engine.run)
+  const musicWatcher = yield* Effect.forkChild(music.run)
   yield* Fiber.join(stopRequested)
   log('stopping')
   yield* Fiber.interrupt(watcher)
+  yield* Fiber.interrupt(musicWatcher)
   yield* engine.waitForFlashToFinish
   yield* lights.close
   yield* Effect.promise(() => server.stop())

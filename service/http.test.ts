@@ -7,8 +7,14 @@ import {
   Snapshot,
   WatcherMode,
 } from '../src/automation'
+import {
+  DEFAULT_MUSIC_CONFIG,
+  type MusicConfig,
+  MusicSnapshot,
+} from '../src/music'
 import { type Engine } from './engine'
 import { makeHandler } from './http'
+import { type MusicSync } from './music'
 
 const snapshot: Snapshot = {
   generatedAt: 1000,
@@ -47,14 +53,29 @@ const setup = () => {
     checkNow: Effect.void,
     pollOnce: Effect.void,
     waitForFlashToFinish: Effect.void,
+    withLightsLock: effect => effect,
+    run: Effect.void,
+  }
+  const saveMusic = vi.fn<(config: MusicConfig) => void>()
+  const music: MusicSync = {
+    snapshot: Effect.succeed({
+      generatedAt: 1000,
+      config: DEFAULT_MUSIC_CONFIG,
+      connection: 'Connected',
+      maybeSong: Option.none(),
+      maybeLastApplied: Option.none(),
+      maybeLastSkip: Option.none(),
+    }),
+    saveConfig: config => Effect.sync(() => saveMusic(config)),
     run: Effect.void,
   }
   const handle = makeHandler({
     engine,
+    music,
     requestRestart,
     run: Effect.runPromise,
   })
-  return { handle, saveConfig, pause, requestRestart }
+  return { handle, saveConfig, saveMusic, pause, requestRestart }
 }
 
 const send = (
@@ -158,5 +179,54 @@ describe('automations API', () => {
     const { handle } = setup()
     const response = await handle(new Request('http://127.0.0.1:8093/other'))
     expect(response.status).toBe(404)
+  })
+
+  test('serves a music colors snapshot the app can decode', async () => {
+    const { handle } = setup()
+    const response = await handle(send('GET', '/automations/music'))
+    expect(response.status).toBe(200)
+    const decoded = Schema.decodeUnknownOption(MusicSnapshot)(
+      await response.json(),
+    )
+    expect(Option.isSome(decoded)).toBe(true)
+  })
+
+  test('saves music colors settings with the group trimmed', async () => {
+    const { handle, saveMusic } = setup()
+    const response = await handle(
+      send('PUT', '/automations/music/config', {
+        ...DEFAULT_MUSIC_CONFIG,
+        isEnabled: true,
+        group: '  Living Room ',
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(saveMusic).toHaveBeenCalledWith({
+      ...DEFAULT_MUSIC_CONFIG,
+      isEnabled: true,
+      group: 'Living Room',
+    })
+  })
+
+  test('refuses music colors settings without a group', async () => {
+    const { handle, saveMusic } = setup()
+    const response = await handle(
+      send('PUT', '/automations/music/config', {
+        ...DEFAULT_MUSIC_CONFIG,
+        group: ' ',
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(saveMusic).not.toHaveBeenCalled()
+  })
+
+  test('refuses music colors writes that are not JSON', async () => {
+    const { handle } = setup()
+    const response = await handle(
+      send('PUT', '/automations/music/config', DEFAULT_MUSIC_CONFIG, {
+        'content-type': 'text/plain',
+      }),
+    )
+    expect(response.status).toBe(415)
   })
 })

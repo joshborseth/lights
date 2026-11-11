@@ -98,6 +98,8 @@ export type Engine = Readonly<{
   checkNow: Effect.Effect<void>
   pollOnce: Effect.Effect<void>
   waitForFlashToFinish: Effect.Effect<void>
+  /** Runs light commands from elsewhere without overlapping a flash. */
+  withLightsLock: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>
   run: Effect.Effect<void>
 }>
 
@@ -696,6 +698,7 @@ export const makeEngine = <E>(
       }),
       pollOnce,
       waitForFlashToFinish: flashLock.withPermits(1)(Effect.void),
+      withLightsLock: effect => flashLock.withPermits(1)(effect),
       run: Effect.all([pollLoop, probeLoop], {
         concurrency: 'unbounded',
         discard: true,

@@ -30,6 +30,7 @@ import {
   type EntryList,
   Message,
   type Model,
+  MusicRemote,
   type PrMergedSection,
   Remote,
   type Reveal,
@@ -38,6 +39,7 @@ import {
   draftProblem,
   updated,
 } from './automations'
+import { type MusicConfig, type MusicSnapshot } from './music'
 
 const CARD =
   'flex flex-col gap-4 rounded-xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10'
@@ -177,6 +179,7 @@ const loadedView = (
           ),
         Connections: ({ maybeOpenSection }) =>
           connectionsScreen(model, snapshot, draft, maybeOpenSection, h),
+        Music: () => musicScreen(model, groupNames, h),
       }),
       saveBarView(model, draft, h),
     ],
@@ -596,6 +599,8 @@ const listScreen = (
           ),
         ],
       ),
+      h.h2([h.Class(cn(GROUP_LABEL, 'mt-2'))], ['Home']),
+      h.div([h.Class(LIST)], [musicRowView(model, h)]),
       h.div(
         [h.Class(cn(LIST, 'mt-2'))],
         [
@@ -630,6 +635,321 @@ const listScreen = (
     ],
   )
 }
+
+// MUSIC COLORS
+
+const MUSIC_NAME = 'Music colors'
+const MUSIC_IDLE_HEX = '#71717a'
+
+const musicSwitchView = (
+  model: Model,
+  snapshot: MusicSnapshot,
+  id: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  switch_<Message>(
+    {
+      id,
+      label: MUSIC_NAME,
+      isChecked: snapshot.config.isEnabled,
+      isDisabled: model.isSavingMusic,
+      onToggle: () =>
+        Message.ChangedMusicConfig({
+          config: {
+            ...snapshot.config,
+            isEnabled: !snapshot.config.isEnabled,
+          },
+        }),
+      className: 'data-[size=default]:h-7 data-[size=default]:w-12',
+      thumbClass:
+        'bg-white shadow-sm dark:data-checked:bg-white dark:data-unchecked:bg-foreground group-data-[size=default]/switch:size-6 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-3px)] group-data-[size=default]/switch:data-unchecked:translate-x-px',
+      labelClass: 'sr-only',
+      wrapperClass: 'gap-0',
+    },
+    h,
+  )
+
+const musicConnectionLabel = (snapshot: MusicSnapshot): string =>
+  Match.value(snapshot.connection).pipe(
+    Match.when('Connected', () => 'Listening to the music app'),
+    Match.when('Connecting', () => 'Connecting to the music app…'),
+    Match.when('Unreachable', () => "Can't reach the music app"),
+    Match.exhaustive,
+  )
+
+const musicRowStatus = (snapshot: MusicSnapshot): RowStatus => {
+  const muted = 'text-muted-foreground'
+  if (!snapshot.config.isEnabled) {
+    return { text: 'Off', toneClass: muted }
+  }
+  if (snapshot.connection === 'Unreachable') {
+    return { text: musicConnectionLabel(snapshot), toneClass: 'text-amber-300' }
+  }
+  return Option.match(snapshot.maybeLastApplied, {
+    onNone: () => ({
+      text: `${snapshot.config.group} follows the album cover`,
+      toneClass: muted,
+    }),
+    onSome: applied => ({
+      text: `${applied.title} · ${elapsed(snapshot.generatedAt, applied.at)}`,
+      toneClass: muted,
+    }),
+  })
+}
+
+const colorDotsView = (
+  colors: ReadonlyArray<string>,
+  sizeClass: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.span(
+    [h.Class('flex shrink-0 items-center -space-x-1.5')],
+    Array.map(colors, hex => colorDotView(hex, sizeClass, false, h)),
+  )
+
+const musicRowView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  MusicRemote.match(model.music, {
+    Loading: () =>
+      h.p([h.Class(cn(CAPTION, 'px-4 py-3'))], [`${MUSIC_NAME}: loading…`]),
+    Unavailable: ({ reason }) =>
+      h.p(
+        [h.Class(cn(CAPTION, 'px-4 py-3'))],
+        [`${MUSIC_NAME} is unavailable: ${reason}.`],
+      ),
+    Loaded: ({ snapshot }) => {
+      const status = musicRowStatus(snapshot)
+      const colors = Option.match(snapshot.maybeLastApplied, {
+        onNone: () => [MUSIC_IDLE_HEX],
+        onSome: ({ colors }) => colors.slice(0, 3),
+      })
+      return h.div(
+        [h.Class('relative flex items-center gap-3 pr-4 hover:bg-muted/40')],
+        [
+          h.button(
+            [
+              h.Type('button'),
+              h.AriaLabel(`Open ${MUSIC_NAME}`),
+              h.OnClick(Message.SelectedScreen({ screen: Screen.Music() })),
+              h.Class(
+                'flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left after:absolute after:inset-0',
+              ),
+            ],
+            [
+              h.span(
+                [
+                  h.Class(
+                    cn(
+                      'flex w-7 shrink-0 justify-center',
+                      !snapshot.config.isEnabled && 'opacity-40',
+                    ),
+                  ),
+                ],
+                [colorDotsView(colors, 'size-5', h)],
+              ),
+              h.span(
+                [h.Class('flex min-w-0 flex-col gap-0.5')],
+                [
+                  h.span([h.Class('text-sm font-medium')], [MUSIC_NAME]),
+                  h.span(
+                    [h.Class(cn('break-words text-xs', status.toneClass))],
+                    [status.text],
+                  ),
+                ],
+              ),
+            ],
+          ),
+          musicSwitchView(model, snapshot, 'music-list-enabled', h),
+          icon(h, ChevronRight, 'size-4 shrink-0 text-muted-foreground'),
+        ],
+      )
+    },
+  })
+
+const musicToggleView = (
+  model: Model,
+  label: string,
+  hint: string,
+  isOn: boolean,
+  toConfig: (isOn: boolean) => MusicConfig,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex items-center justify-between gap-3')],
+    [
+      h.div(
+        [h.Class('min-w-0')],
+        [h.p([h.Class(FIELD_LABEL)], [label]), h.p([h.Class(CAPTION)], [hint])],
+      ),
+      h.button(
+        [
+          h.Type('button'),
+          h.Role('switch'),
+          h.AriaChecked(isOn),
+          h.AriaLabel(label),
+          h.Disabled(model.isSavingMusic),
+          h.OnClick(Message.ChangedMusicConfig({ config: toConfig(!isOn) })),
+          h.Class(
+            isOn
+              ? 'w-14 shrink-0 rounded-lg bg-primary py-1.5 text-sm text-primary-foreground'
+              : 'w-14 shrink-0 rounded-lg bg-muted py-1.5 text-sm text-muted-foreground',
+          ),
+        ],
+        [isOn ? 'On' : 'Off'],
+      ),
+    ],
+  )
+
+const factLineView = (
+  label: string,
+  value: string,
+  colors: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex items-center justify-between gap-3')],
+    [
+      h.div(
+        [h.Class('min-w-0')],
+        [
+          h.p([h.Class(CAPTION)], [label]),
+          h.p([h.Class('break-words text-sm')], [value]),
+        ],
+      ),
+      Array.isReadonlyArrayEmpty(colors)
+        ? h.empty
+        : colorDotsView(colors, 'size-6', h),
+    ],
+  )
+
+const musicSongLine = (snapshot: MusicSnapshot): string =>
+  Option.match(snapshot.maybeSong, {
+    onNone: () => 'Nothing',
+    onSome: song =>
+      `${song.title} · ${song.artists}${song.isPlaying ? '' : ' (paused)'}${song.isOnTv ? ' · on the TV' : ''}`,
+  })
+
+const musicScreen = (
+  model: Model,
+  groupNames: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class(SCREEN)],
+    [
+      backButtonView(h),
+      MusicRemote.match(model.music, {
+        Loading: () => h.p([h.Class(CAPTION)], ['Loading…']),
+        Unavailable: ({ reason }) =>
+          h.p(
+            [h.Class('text-sm text-destructive'), h.Role('alert')],
+            [`${MUSIC_NAME} is unavailable: ${reason}.`],
+          ),
+        Loaded: ({ snapshot }) => {
+          const { config } = snapshot
+          const choices = Array.contains(groupNames, config.group)
+            ? groupNames
+            : [config.group, ...groupNames]
+          return h.div(
+            [h.Class('flex flex-col gap-3')],
+            [
+              h.div(
+                [h.Class('flex items-center justify-between gap-3')],
+                [
+                  h.h2([h.Class(SCREEN_TITLE)], [MUSIC_NAME]),
+                  musicSwitchView(model, snapshot, 'music-detail-enabled', h),
+                ],
+              ),
+              h.p(
+                [h.Class('text-sm text-muted-foreground')],
+                [
+                  'When a new song starts, the lights that are on take the colors of its album cover. Lights that are off stay off, and brightness stays where it is.',
+                ],
+              ),
+              h.div(
+                [h.Class(cn(CARD, 'flex flex-col gap-3'))],
+                [
+                  factLineView(
+                    musicConnectionLabel(snapshot),
+                    musicSongLine(snapshot),
+                    Option.match(snapshot.maybeSong, {
+                      onNone: () => [],
+                      onSome: ({ colors }) => colors,
+                    }),
+                    h,
+                  ),
+                  Option.match(snapshot.maybeLastApplied, {
+                    onNone: () => h.empty,
+                    onSome: applied =>
+                      factLineView(
+                        `Lights changed ${elapsed(snapshot.generatedAt, applied.at)}`,
+                        `${applied.title} on ${applied.lights} ${applied.lights === 1 ? 'light' : 'lights'}`,
+                        applied.colors,
+                        h,
+                      ),
+                  }),
+                  Option.match(snapshot.maybeLastSkip, {
+                    onNone: () => h.empty,
+                    onSome: reason =>
+                      h.p([h.Class(CAPTION)], [`Left alone: ${reason}`]),
+                  }),
+                ],
+              ),
+              h.div(
+                [h.Class(cn(CARD, 'flex flex-col gap-4'))],
+                [
+                  fieldShell(
+                    'Lights',
+                    Option.none(),
+                    h.select(
+                      [
+                        h.Value(config.group),
+                        h.Disabled(model.isSavingMusic),
+                        h.OnChange(group =>
+                          Message.ChangedMusicConfig({
+                            config: { ...config, group },
+                          }),
+                        ),
+                        h.Class(INPUT),
+                      ],
+                      Array.map(choices, name =>
+                        h.option(
+                          [h.Value(name), h.Selected(name === config.group)],
+                          [name],
+                        ),
+                      ),
+                    ),
+                    h,
+                  ),
+                  musicToggleView(
+                    model,
+                    'Only on the TV',
+                    'Ignore music playing on a phone.',
+                    config.onlyOnTv,
+                    onlyOnTv => ({ ...config, onlyOnTv }),
+                    h,
+                  ),
+                  musicToggleView(
+                    model,
+                    'Mix colors',
+                    'Give bulbs different colors from the cover, up to three.',
+                    config.spreadColors,
+                    spreadColors => ({ ...config, spreadColors }),
+                    h,
+                  ),
+                ],
+              ),
+              h.p(
+                [h.Class(CAPTION)],
+                [
+                  'Black, white, and grey covers turn the lights warm white. A Rainbow on these lights stops when a song changes them.',
+                ],
+              ),
+            ],
+          )
+        },
+      }),
+    ],
+  )
 
 // PR MERGED
 

@@ -1,12 +1,9 @@
 import { Array, Data, Duration, Effect, Option, pipe } from 'effect'
 import mqtt, { type MqttClient } from 'mqtt'
 
+import { type BulbCapabilities } from '../src/music'
 import { type LightsPort } from './engine'
-import {
-  type JsonObject,
-  type LightStates,
-  isJsonObject,
-} from './flash'
+import { type JsonObject, type LightStates, isJsonObject } from './flash'
 
 const BASE_TOPIC = 'zigbee2mqtt'
 const RECONNECT_MS = 2000
@@ -50,8 +47,34 @@ const stringField = (
   return typeof value === 'string' ? value : undefined
 }
 
+const NO_CAPABILITIES: BulbCapabilities = {
+  supportsColor: false,
+  supportsColorTemp: false,
+}
+
+// NOTE: The same reading of a device's exposes as the app's `toLight`.
+const lightCapabilities = (
+  device: JsonObject | undefined,
+): BulbCapabilities => {
+  const light = asArray(asObject(device?.['definition'])?.['exposes'])
+    .map(asObject)
+    .find(expose => stringField(expose, 'type') === 'light')
+  const names = asArray(light?.['features']).map(feature =>
+    stringField(asObject(feature), 'name'),
+  )
+  return light === undefined
+    ? NO_CAPABILITIES
+    : {
+        supportsColor: names.includes('color_xy') || names.includes('color_hs'),
+        supportsColorTemp: names.includes('color_temp'),
+      }
+}
+
 export type LightsConnection = LightsPort<LightsError> &
-  Readonly<{ close: Effect.Effect<void> }>
+  Readonly<{
+    close: Effect.Effect<void>
+    capabilitiesOf: (name: string) => BulbCapabilities
+  }>
 
 export const connectLights = (
   options: MqttOptions,
@@ -74,6 +97,7 @@ export const connectLights = (
     const states = new Map<string, JsonObject>()
     const groupAddresses = new Map<string, ReadonlyArray<string>>()
     const addressNames = new Map<string, string>()
+    const capabilities = new Map<string, BulbCapabilities>()
     const rainbowFrames = new Map<string, ReadonlyArray<RecentHex>>()
     let maybeBridgeOnline: Option.Option<boolean> = Option.none()
 
@@ -101,12 +125,14 @@ export const connectLights = (
 
     const handleDevices = (payload: unknown): void => {
       addressNames.clear()
+      capabilities.clear()
       asArray(payload).forEach(item => {
         const device = asObject(item)
         const address = stringField(device, 'ieee_address')
         const name = stringField(device, 'friendly_name')
         if (address !== undefined && name !== undefined) {
           addressNames.set(address, name)
+          capabilities.set(name, lightCapabilities(device))
         }
       })
     }
@@ -227,15 +253,19 @@ export const connectLights = (
       isBrokerConnected: () => client.connected,
       maybeIsBridgeOnline: () => maybeBridgeOnline,
       groupMembers,
+      capabilitiesOf: name => capabilities.get(name) ?? NO_CAPABILITIES,
       activeRainbowGroups: () => {
         const now = Date.now()
-        return Array.filter(Array.fromIterable(groupAddresses.keys()), group => {
-          const recent = Array.filter(
-            rainbowFrames.get(group) ?? [],
-            frame => now - frame.at < RAINBOW_WINDOW_MS,
-          )
-          return new Set(Array.map(recent, frame => frame.hex)).size >= 2
-        })
+        return Array.filter(
+          Array.fromIterable(groupAddresses.keys()),
+          group => {
+            const recent = Array.filter(
+              rainbowFrames.get(group) ?? [],
+              frame => now - frame.at < RAINBOW_WINDOW_MS,
+            )
+            return new Set(Array.map(recent, frame => frame.hex)).size >= 2
+          },
+        )
       },
       markRainbowStopped: group => {
         rainbowFrames.delete(group)

@@ -9,7 +9,14 @@ import {
   configProblem,
   normalizeConfig,
 } from '../src/automation'
+import {
+  MUSIC_API_PATH,
+  MusicConfig,
+  MusicSnapshot,
+  musicConfigProblem,
+} from '../src/music'
 import { type Engine } from './engine'
+import { type MusicSync } from './music'
 
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_PAUSE_MINUTES = 7 * 24 * 60
@@ -24,6 +31,7 @@ const failure = (status: number, error: string): Response =>
   json(status, { error })
 
 const encodeSnapshot = Schema.encodeSync(Snapshot)
+const encodeMusicSnapshot = Schema.encodeSync(MusicSnapshot)
 
 const parseBody = async (request: Request): Promise<unknown> => {
   try {
@@ -43,11 +51,52 @@ const isOversized = (request: Request): boolean =>
 
 export type HttpDeps = Readonly<{
   engine: Engine
+  music: MusicSync
   requestRestart: () => void
   run: <A>(effect: Effect.Effect<A>) => Promise<A>
 }>
 
-export const makeHandler = ({ engine, requestRestart, run }: HttpDeps) => {
+export const makeHandler = ({
+  engine,
+  music,
+  requestRestart,
+  run,
+}: HttpDeps) => {
+  const respondWithMusic = async (): Promise<Response> =>
+    json(200, encodeMusicSnapshot(await run(music.snapshot)))
+
+  const handleMusic = async (
+    path: string,
+    request: Request,
+  ): Promise<Response> => {
+    if (request.method === 'GET' && path === '') {
+      return respondWithMusic()
+    }
+    if (path !== '/config' || request.method !== 'PUT') {
+      return failure(404, 'Not found.')
+    }
+    if (!isJsonRequest(request)) {
+      return failure(415, 'Send JSON.')
+    }
+    if (isOversized(request)) {
+      return failure(413, 'That request is too large.')
+    }
+    const body = await parseBody(request)
+    return Option.match(Schema.decodeUnknownOption(MusicConfig)(body), {
+      onNone: async () => failure(400, 'Those settings could not be read.'),
+      onSome: async config =>
+        Option.match(musicConfigProblem(config), {
+          onSome: async problem => failure(400, problem),
+          onNone: async () => {
+            await run(
+              music.saveConfig({ ...config, group: config.group.trim() }),
+            )
+            return respondWithMusic()
+          },
+        }),
+    })
+  }
+
   const respondWithSnapshot = async (): Promise<Response> =>
     json(200, encodeSnapshot(await run(engine.snapshot)))
 
@@ -122,6 +171,12 @@ export const makeHandler = ({ engine, requestRestart, run }: HttpDeps) => {
 
   return async (request: Request): Promise<Response> => {
     const { pathname } = new URL(request.url)
+    if (
+      pathname === MUSIC_API_PATH ||
+      pathname.startsWith(`${MUSIC_API_PATH}/`)
+    ) {
+      return handleMusic(pathname.slice(MUSIC_API_PATH.length), request)
+    }
     if (
       pathname !== AUTOMATION_API_PATH &&
       !pathname.startsWith(`${AUTOMATION_API_PATH}/`)

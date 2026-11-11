@@ -43,6 +43,7 @@ const room = (overrides: Partial<HouseRoom>): HouseRoom => ({
   depth: 4,
   floorHex: '#000000',
   lightSpace: 'Test',
+  withinRoomId: Option.none(),
   annexes: [],
   doors: [],
   furniture: [],
@@ -52,12 +53,14 @@ const room = (overrides: Partial<HouseRoom>): HouseRoom => ({
 })
 
 const roomContaining = (x: number, z: number) =>
-  ROOMS.find(
-    candidate =>
-      x >= candidate.x &&
-      x <= candidate.x + candidate.width &&
-      z >= candidate.z &&
-      z <= candidate.z + candidate.depth,
+  ROOMS.find(candidate =>
+    roomAreas(candidate).some(
+      area =>
+        x >= area.x &&
+        x <= area.x + area.width &&
+        z >= area.z &&
+        z <= area.z + area.depth,
+    ),
   )
 
 describe('placedBulbs', () => {
@@ -227,7 +230,11 @@ describe('wallSpans', () => {
     expect(doorsBetween('Kitchen', 'West', 4.6, 6.9)).toEqual(
       doorsBetween('Bathroom', 'East', 4.6, 6.9),
     )
-    expect(doorsBetween('Bedroom', 'South', 0, 3.6)).toEqual([])
+    expect(doorsBetween('Bedroom', 'South', 0, 2.2)).toEqual(
+      doorsBetween('Closet', 'North', 0, 2.2),
+    )
+    expect(doorsBetween('Closet', 'North', 0, 2.2)).toHaveLength(1)
+    expect(doorsBetween('Closet', 'South', 0, 2.2)).toEqual([])
     expect(doorsBetween('Bathroom', 'North', 0, 3.6)).toEqual([])
   })
 })
@@ -277,6 +284,7 @@ describe('the floor plan', () => {
       light('Living Room Shroom', 'd'),
       light('Kitchen Light Less Wobbly Chair Side', 'e'),
       light('Kitchen Light More Wobbly Chair Side', 'f'),
+      light('Closet', 'g'),
     ]
     const bulbs = placedBulbs(lights, [], {})
     const named = (name: string) => bulbs.find(bulb => bulb.name === name)
@@ -290,7 +298,32 @@ describe('the floor plan', () => {
     expect(named('Kitchen Light Less Wobbly Chair Side')?.x).toBeLessThan(
       named('Kitchen Light More Wobbly Chair Side')?.x ?? 0,
     )
+    expect(named('Closet')?.roomId).toBe('Closet')
     expect(bulbs.every(({ isMounted }) => isMounted)).toBe(true)
+  })
+
+  test('puts the closet bulb in the closet while it is in the Bedroom group', () => {
+    const lights = [
+      light('Bedroom Sphere', 'a'),
+      light('Bedroom UFO', 'b'),
+      light('Closet', 'g'),
+      light('Reading Lamp', 'r'),
+    ]
+    const bedroomGroup: ReadonlyArray<Group> = [
+      { name: 'Bedroom', memberAddresses: ['a', 'b', 'g', 'r'] },
+    ]
+    const roomOf = (name: string) =>
+      placedBulbs(lights, bedroomGroup, {}).find(bulb => bulb.name === name)
+        ?.roomId
+
+    expect(roomOf('Closet')).toBe('Closet')
+    expect(roomOf('Bedroom UFO')).toBe('Bedroom')
+    expect(roomOf('Reading Lamp')).toBe('Bedroom')
+    expect(
+      placedBulbs(lights, bedroomGroup, {}).find(
+        bulb => bulb.name === 'Bedroom UFO',
+      )?.isMounted,
+    ).toBe(true)
   })
 })
 

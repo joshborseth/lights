@@ -120,6 +120,34 @@ const startsWithRoomName = (light: Light, room: HouseRoom): boolean =>
 
 const DEFAULT_ROOM_ID: RoomId = 'Stairs'
 
+const belongsInRoom = (
+  light: Light,
+  room: HouseRoom,
+  groups: ReadonlyArray<Group>,
+): boolean =>
+  isMemberOfRoomGroup(light, room, groups) || startsWithRoomName(light, room)
+
+// NOTE: A room inside another, such as the closet inside the bedroom, takes a
+// bulb that would otherwise go to the outer room when the bulb is in its group
+// or named after it. That way the closet bulb can stay in the Bedroom group.
+const innerRoomId = (
+  light: Light,
+  groups: ReadonlyArray<Group>,
+  outerRoomId: RoomId,
+): RoomId =>
+  pipe(
+    ROOMS,
+    Array.findFirst(
+      room =>
+        Option.exists(room.withinRoomId, id => id === outerRoomId) &&
+        belongsInRoom(light, room, groups),
+    ),
+    Option.match({
+      onNone: () => outerRoomId,
+      onSome: room => room.id,
+    }),
+  )
+
 const roomIdOfLight = (light: Light, groups: ReadonlyArray<Group>): RoomId =>
   pipe(
     Array.findFirst(ROOMS, room => isMemberOfRoomGroup(light, room, groups)),
@@ -128,7 +156,7 @@ const roomIdOfLight = (light: Light, groups: ReadonlyArray<Group>): RoomId =>
     ),
     Option.match({
       onNone: () => DEFAULT_ROOM_ID,
-      onSome: room => room.id,
+      onSome: room => innerRoomId(light, groups, room.id),
     }),
   )
 

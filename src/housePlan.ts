@@ -1,10 +1,11 @@
-import { Array, Schema } from 'effect'
+import { Array, Option, Schema } from 'effect'
 
 // NOTE: Estimated from photos of each room, so sizes are approximate. North is
 // the living room window wall, x grows east, and z grows south. The bedroom door
-// opens straight off the great room. The closet is deliberately left out and its
-// floor counts as bedroom, so the bedroom is one rectangle that reaches the
-// bathroom. The bathroom door is on the kitchen wall, and its position along that
+// opens straight off the great room. The walk-in closet fills the bedroom's
+// southwest corner, between the bed and the bathroom, and opens into the bedroom
+// through double doors. The nook east of it, which holds the hamper and the UFO
+// light, is an annex of the bedroom. The bathroom door is on the kitchen wall, and its position along that
 // wall is inferred. The bathroom keeps its modeled outline, so its walkway and
 // tub are drawn shorter than they really are.
 
@@ -18,6 +19,8 @@ const GREAT_ROOM_WIDTH = 4.2
 const LIVING_ROOM_DEPTH = 3.3
 const KITCHEN_SOUTH = 6.9
 const BEDROOM_DEPTH = 4.6
+const CLOSET_NORTH = 3.5
+const CLOSET_EAST = 2.2
 const STAIRS_WEST = 2.3
 const STAIRS_FOOT_X = 5.7
 const STAIRS_OPENING_WIDTH = 1.38
@@ -55,6 +58,12 @@ const COOKTOP_HEX = '#2e2e30'
 const PARTITION_HEX = '#a09c97'
 const TILE_HEX = '#55585e'
 const VACUUM_HEX = '#2f4fa3'
+const LAVENDER_HEX = '#6f6aa8'
+const BAG_TAN_HEX = '#9a6a3c'
+const COAT_BROWN_HEX = '#5b3f2c'
+const COAT_NAVY_HEX = '#2c3550'
+const ARGYLE_HEX = '#bdb8b0'
+const HOODIE_PINK_HEX = '#c26a7e'
 
 const COUNTER_HEIGHT = 0.88
 const COUNTER_THICKNESS = 0.04
@@ -81,6 +90,7 @@ export const RoomId = Schema.Literals([
   'Kitchen',
   'Stairs',
   'Bedroom',
+  'Closet',
   'Bathroom',
 ])
 export type RoomId = typeof RoomId.Type
@@ -118,6 +128,7 @@ export type HouseRoom = RoomArea &
     label: string
     floorHex: string
     lightSpace: string
+    withinRoomId: Option.Option<RoomId>
     annexes: ReadonlyArray<RoomArea>
     furniture: ReadonlyArray<Furniture>
     lightSpots: ReadonlyArray<LightSpot>
@@ -318,6 +329,7 @@ const LIVING_ROOM: HouseRoom = {
   depth: LIVING_ROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
+  withinRoomId: Option.none(),
   annexes: [],
   doors: [
     OPEN_LIVING_TO_KITCHEN_SOUTH,
@@ -403,6 +415,7 @@ const KITCHEN: HouseRoom = {
   depth: KITCHEN_SOUTH - LIVING_ROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
+  withinRoomId: Option.none(),
   annexes: [],
   doors: [
     OPEN_LIVING_TO_KITCHEN_NORTH,
@@ -465,6 +478,7 @@ const STAIRS: HouseRoom = {
   depth: HOUSE_DEPTH - KITCHEN_SOUTH,
   floorHex: FLOOR_HEX,
   lightSpace: GREAT_ROOM,
+  withinRoomId: Option.none(),
   annexes: [],
   doors: [
     {
@@ -494,6 +508,249 @@ const CEILING_LIGHT = { x: 2, z: 1.7 }
 const UFO_LIGHT = { x: 3.25, z: 4.25, elevation: 1.96, height: 0.09 }
 const BED = { x: 0.02, z: 1.35, length: 2.03, width: 1.55 }
 const FAN = { x: 2.45, z: 0.3 }
+const CLOSET_DOOR = { from: 0.55, width: 1.2 }
+const SIDE_TABLE = { x: 0.05, z: 3.0, size: 0.4, height: 0.55 }
+
+const BEDROOM_NOOK: RoomArea = {
+  x: CLOSET_EAST,
+  z: CLOSET_NORTH,
+  width: GREAT_ROOM_WEST - CLOSET_EAST,
+  depth: BEDROOM_DEPTH - CLOSET_NORTH,
+  doors: [
+    { side: 'North', from: CLOSET_EAST, width: GREAT_ROOM_WEST - CLOSET_EAST },
+  ],
+}
+
+// CLOSET
+
+const CLOSET_DEPTH = BEDROOM_DEPTH - CLOSET_NORTH
+const CLOSET_LEAF_WIDTH = CLOSET_DOOR.width / 2
+const CLOSET_LEAF_THICKNESS = 0.035
+const CLOSET_LEAF_HEIGHT = 2.0
+const CLOSET_LEAF_OPEN = (75 * Math.PI) / 180
+const BAG_DEPTH = 0.12
+const BAG_WIDTH = 0.22
+const BAG_HEIGHT = 0.34
+const SHELF_ELEVATION = 1.9
+const SHELF_DEPTH = 0.36
+const RAIL_ELEVATION = 1.84
+const LOWER_RAIL_ELEVATION = 1.02
+const CLOTHES_DEPTH = 0.46
+const CLOTHES_GAP = 0.01
+const CLOSET_LIGHT = { x: 1.1, z: 4.0, radius: 0.15, height: 0.08 }
+const WEST_SHELF_END = BEDROOM_DEPTH - SHELF_DEPTH - 0.02
+const WEST_RAIL = { x: 0.3, from: CLOSET_NORTH + 0.06, to: 4.04 }
+
+// NOTE: Each leaf turns on its hinge into the bedroom. A leaf's direction from
+// its hinge is (cos turn, -sin turn), and its bags hang on the side facing the
+// doorway, the way Josh hangs them on the real doors.
+const closetLeaf = (
+  hingeX: number,
+  opensToward: 1 | -1,
+  bagHexes: ReadonlyArray<string>,
+): ReadonlyArray<Furniture> => {
+  const turn = opensToward === 1 ? CLOSET_LEAF_OPEN : Math.PI - CLOSET_LEAF_OPEN
+  const alongX = Math.cos(turn)
+  const alongZ = -Math.sin(turn)
+  const normalX = Math.sin(turn) * opensToward
+  const normalZ = Math.cos(turn) * opensToward
+  const turned = (
+    along: number,
+    out: number,
+    width: number,
+    depth: number,
+    height: number,
+    hex: string,
+    elevation: number,
+  ): Furniture => ({
+    ...box(
+      hingeX + alongX * along + normalX * out - width / 2,
+      CLOSET_NORTH + alongZ * along + normalZ * out - depth / 2,
+      width,
+      depth,
+      height,
+      hex,
+      elevation,
+    ),
+    turn,
+  })
+  return [
+    turned(
+      CLOSET_LEAF_WIDTH / 2,
+      0,
+      CLOSET_LEAF_WIDTH,
+      CLOSET_LEAF_THICKNESS,
+      CLOSET_LEAF_HEIGHT,
+      WHITE_HEX,
+      0,
+    ),
+    ...Array.map(bagHexes, (hex, index) =>
+      turned(
+        0.17 + index * 0.25,
+        (CLOSET_LEAF_THICKNESS + BAG_DEPTH) / 2 + 0.005,
+        BAG_WIDTH,
+        BAG_DEPTH,
+        BAG_HEIGHT + index * 0.06,
+        hex,
+        1.3 - index * 0.12,
+      ),
+    ),
+  ]
+}
+
+// NOTE: Lays clothes side by side along a rail, starting at the rail's west or
+// north end. Pieces are separated by a hair so their tops never share a face.
+// Clothes stay a few centimetres off the walls: a focused neighbor cuts this
+// room away 3 cm inside its walls, and a face on that line would shimmer.
+const clothesRun = (
+  start: Readonly<{ x: number; z: number }>,
+  runsAlong: 'X' | 'Z',
+  elevation: number,
+  height: number,
+  pieces: ReadonlyArray<Readonly<{ width: number; hex: string }>>,
+): ReadonlyArray<Furniture> =>
+  Array.map(pieces, (piece, index) => {
+    const offset = Array.reduce(
+      Array.take(pieces, index),
+      0,
+      (sum, { width }) => sum + width + CLOTHES_GAP,
+    )
+    return runsAlong === 'X'
+      ? box(
+          start.x + offset,
+          start.z,
+          piece.width,
+          CLOTHES_DEPTH,
+          height,
+          piece.hex,
+          elevation,
+        )
+      : box(
+          start.x,
+          start.z + offset,
+          CLOTHES_DEPTH,
+          piece.width,
+          height,
+          piece.hex,
+          elevation,
+        )
+  })
+
+const BACK_RAIL_Z = BEDROOM_DEPTH - CLOTHES_DEPTH / 2 - 0.06
+const BACK_CLOTHES_Z = BACK_RAIL_Z - CLOTHES_DEPTH / 2
+const DOUBLE_HANG_X = 1.12
+
+const CLOSET: HouseRoom = {
+  id: 'Closet',
+  label: 'Closet',
+  labelSpot: { x: 1.1, z: 3.85 },
+  x: 0,
+  z: CLOSET_NORTH,
+  width: CLOSET_EAST,
+  depth: CLOSET_DEPTH,
+  floorHex: FLOOR_HEX,
+  lightSpace: 'Closet',
+  withinRoomId: Option.some('Bedroom'),
+  annexes: [],
+  doors: [{ side: 'North', ...CLOSET_DOOR }],
+  furniture: [
+    box(
+      0.02,
+      BEDROOM_DEPTH - SHELF_DEPTH - 0.02,
+      CLOSET_EAST - 0.04,
+      SHELF_DEPTH,
+      0.02,
+      WHITE_HEX,
+      SHELF_ELEVATION,
+    ),
+    box(
+      0.02,
+      CLOSET_NORTH + 0.06,
+      SHELF_DEPTH,
+      WEST_SHELF_END - CLOSET_NORTH - 0.06,
+      0.02,
+      WHITE_HEX,
+      SHELF_ELEVATION,
+    ),
+    box(
+      0.03,
+      BACK_RAIL_Z,
+      CLOSET_EAST - 0.06,
+      0.02,
+      0.02,
+      STEEL_HEX,
+      RAIL_ELEVATION,
+    ),
+    box(
+      DOUBLE_HANG_X,
+      BACK_RAIL_Z,
+      CLOSET_EAST - DOUBLE_HANG_X - 0.03,
+      0.02,
+      0.02,
+      STEEL_HEX,
+      LOWER_RAIL_ELEVATION,
+    ),
+    box(
+      WEST_RAIL.x - 0.01,
+      WEST_RAIL.from,
+      0.02,
+      WEST_RAIL.to - WEST_RAIL.from,
+      0.02,
+      STEEL_HEX,
+      RAIL_ELEVATION,
+    ),
+    ...clothesRun({ x: 0.08, z: BACK_CLOTHES_Z }, 'X', 0.36, 1.46, [
+      { width: 0.2, hex: COAT_BROWN_HEX },
+      { width: 0.2, hex: FRAME_HEX },
+      { width: 0.26, hex: COAT_NAVY_HEX },
+      { width: 0.18, hex: CHERRY_HEX },
+      { width: 0.14, hex: FRAME_HEX },
+    ]),
+    ...clothesRun({ x: DOUBLE_HANG_X, z: BACK_CLOTHES_Z }, 'X', 1.08, 0.74, [
+      { width: 0.16, hex: FRAME_HEX },
+      { width: 0.2, hex: PILLOW_HEX },
+      { width: 0.16, hex: COAT_BROWN_HEX },
+      { width: 0.2, hex: ARGYLE_HEX },
+      { width: 0.15, hex: COAT_NAVY_HEX },
+      { width: 0.12, hex: FRAME_HEX },
+    ]),
+    ...clothesRun({ x: DOUBLE_HANG_X, z: BACK_CLOTHES_Z }, 'X', 0.14, 0.86, [
+      { width: 0.14, hex: CHERRY_HEX },
+      { width: 0.16, hex: CARDBOARD_HEX },
+      { width: 0.22, hex: HOODIE_PINK_HEX },
+      { width: 0.16, hex: BEDDING_HEX },
+      { width: 0.14, hex: BOOK_TEAL_HEX },
+      { width: 0.15, hex: FRAME_HEX },
+    ]),
+    ...clothesRun(
+      { x: WEST_RAIL.x - CLOTHES_DEPTH / 2, z: WEST_RAIL.from + 0.02 },
+      'Z',
+      0.5,
+      1.32,
+      [
+        { width: 0.16, hex: COAT_NAVY_HEX },
+        { width: 0.16, hex: CLOTHES_HEX },
+        { width: 0.13, hex: COAT_BROWN_HEX },
+      ],
+    ),
+    round(
+      CLOSET_LIGHT.x,
+      CLOSET_LIGHT.z,
+      CLOSET_LIGHT.radius,
+      CLOSET_LIGHT.height,
+      LANTERN_HEX,
+      WALL_HEIGHT - CLOSET_LIGHT.height,
+      0.75,
+    ),
+  ],
+  lightSpots: [
+    {
+      x: CLOSET_LIGHT.x,
+      y: WALL_HEIGHT - CLOSET_LIGHT.height - 0.04,
+      z: CLOSET_LIGHT.z,
+    },
+  ],
+}
 
 const BEDROOM: HouseRoom = {
   id: 'Bedroom',
@@ -502,11 +759,16 @@ const BEDROOM: HouseRoom = {
   x: 0,
   z: 0,
   width: GREAT_ROOM_WEST,
-  depth: BEDROOM_DEPTH,
+  depth: CLOSET_NORTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bedroom',
-  annexes: [],
-  doors: [{ side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH }],
+  withinRoomId: Option.none(),
+  annexes: [BEDROOM_NOOK],
+  doors: [
+    { side: 'East', from: BEDROOM_DOOR_FROM, width: DOOR_WIDTH },
+    { side: 'South', ...CLOSET_DOOR },
+    { side: 'South', from: CLOSET_EAST, width: GREAT_ROOM_WEST - CLOSET_EAST },
+  ],
   furniture: [
     box(BED.x, BED.z - 0.05, 0.1, BED.width + 0.1, 0.85, BED_FRAME_HEX),
     box(BED.x + 0.1, BED.z, BED.length - 0.1, BED.width, 0.3, BED_FRAME_HEX),
@@ -541,6 +803,39 @@ const BEDROOM: HouseRoom = {
     round(3.25, 0.32, 0.01, 0.42, CHERRY_HEX, 1.88),
     ball(3.25, 1.76, 0.32, 0.13, CHERRY_HEX),
     wallArt(0, 2.05, 0.03, 0.62, 0.55, 1.1, WICKER_HEX),
+    box(
+      SIDE_TABLE.x,
+      SIDE_TABLE.z,
+      SIDE_TABLE.size,
+      SIDE_TABLE.size,
+      SIDE_TABLE.height,
+      GOLD_HEX,
+    ),
+    box(
+      SIDE_TABLE.x + 0.02,
+      SIDE_TABLE.z + 0.02,
+      SIDE_TABLE.size - 0.04,
+      SIDE_TABLE.size - 0.04,
+      0.01,
+      GLASS_HEX,
+      SIDE_TABLE.height,
+    ),
+    round(
+      SIDE_TABLE.x + 0.25,
+      SIDE_TABLE.z + 0.15,
+      0.08,
+      0.22,
+      LAVENDER_HEX,
+      SIDE_TABLE.height + 0.01,
+      0.85,
+    ),
+    wallArt(0, 3.0, 0.03, 0.3, 0.38, 1.5, GOLD_HEX),
+    wallArt(0, 3.02, 0.03, 0.3, 0.3, 1.05, GOLD_HEX),
+    ...closetLeaf(CLOSET_DOOR.from, 1, [BAG_TAN_HEX, FRAME_HEX]),
+    ...closetLeaf(CLOSET_DOOR.from + CLOSET_DOOR.width, -1, [
+      FRAME_HEX,
+      BAG_TAN_HEX,
+    ]),
     round(SPHERE_LANTERN.x, SPHERE_LANTERN.z, 0.008, 0.05, FRAME_HEX, 2.25),
     ball(
       SPHERE_LANTERN.x,
@@ -623,6 +918,7 @@ const BATHROOM: HouseRoom = {
   depth: KITCHEN_SOUTH - BEDROOM_DEPTH,
   floorHex: FLOOR_HEX,
   lightSpace: 'Bathroom',
+  withinRoomId: Option.none(),
   annexes: [],
   doors: [{ side: 'East', from: BATHROOM_DOOR_FROM, width: DOOR_WIDTH }],
   furniture: [
@@ -747,5 +1043,6 @@ export const ROOMS: ReadonlyArray<HouseRoom> = [
   KITCHEN,
   STAIRS,
   BEDROOM,
+  CLOSET,
   BATHROOM,
 ]

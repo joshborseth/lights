@@ -717,12 +717,18 @@ const drawFurnitureContact = (
   context: CanvasRenderingContext2D,
   piece: Furniture,
 ): void => {
-  context.fillRect(
-    contactPixelX(piece.x) - OFFSCREEN_SHIFT_PX,
-    contactPixelZ(piece.z),
-    (piece.width / CONTACT_WIDTH) * CONTACT_TEXTURE_PX,
-    (piece.depth / CONTACT_DEPTH) * CONTACT_TEXTURE_PX,
+  context.save()
+  context.translate(
+    contactPixelX(piece.x + piece.width / 2) - OFFSCREEN_SHIFT_PX,
+    contactPixelZ(piece.z + piece.depth / 2),
   )
+  context.scale(
+    CONTACT_TEXTURE_PX / CONTACT_WIDTH,
+    CONTACT_TEXTURE_PX / CONTACT_DEPTH,
+  )
+  context.rotate(-piece.turn)
+  context.fillRect(-piece.width / 2, -piece.depth / 2, piece.width, piece.depth)
+  context.restore()
 }
 
 const drawWallContact = (
@@ -842,13 +848,20 @@ const WHOLE_HOUSE: Bounds = {
   height: WALL_HEIGHT * 0.7,
 }
 
-const boundsOfRoom = (room: HouseRoom): Bounds => ({
-  minX: room.x - ROOM_FRAME_MARGIN,
-  maxX: room.x + room.width + ROOM_FRAME_MARGIN,
-  minZ: room.z - ROOM_FRAME_MARGIN,
-  maxZ: room.z + room.depth + ROOM_FRAME_MARGIN,
-  height: ROOM_FRAME_HEIGHT,
-})
+const boundsOfRoom = (room: HouseRoom): Bounds => {
+  const areas = roomAreas(room)
+  return {
+    minX: Math.min(...Array.map(areas, area => area.x)) - ROOM_FRAME_MARGIN,
+    maxX:
+      Math.max(...Array.map(areas, area => area.x + area.width)) +
+      ROOM_FRAME_MARGIN,
+    minZ: Math.min(...Array.map(areas, area => area.z)) - ROOM_FRAME_MARGIN,
+    maxZ:
+      Math.max(...Array.map(areas, area => area.z + area.depth)) +
+      ROOM_FRAME_MARGIN,
+    height: ROOM_FRAME_HEIGHT,
+  }
+}
 
 const boundsCenter = (bounds: Bounds): Vector3 =>
   new Vector3(

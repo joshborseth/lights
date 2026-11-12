@@ -1,8 +1,8 @@
+import { Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 
 import { hexToXy } from './automation'
 import {
-  DEFAULT_MUSIC_CONFIG,
   type MusicBulb,
   WARM_WHITE_COLOR_TEMP,
   bulbHex,
@@ -36,54 +36,43 @@ describe('bulbHex', () => {
 })
 
 describe('musicCommands', () => {
-  const palette = ['#1281b6', '#8bce00', '#e03070', '#ffaa00']
+  const color = Option.some('#1281b6')
 
-  test('spreads the first three colors across lit bulbs in name order', () => {
-    const commands = musicCommands(
-      palette,
-      [bulb('D'), bulb('B'), bulb('A'), bulb('C')],
-      DEFAULT_MUSIC_CONFIG,
-    )
+  test('gives every lit bulb the cover color, in name order', () => {
+    const commands = musicCommands(color, [
+      bulb('D'),
+      bulb('B'),
+      bulb('A'),
+      bulb('C'),
+    ])
     expect(commands.map(({ name }) => name)).toEqual(['A', 'B', 'C', 'D'])
-    const hexes = commands.map(({ hex }) => hex)
-    expect(hexes[0]).toBe(bulbHex('#1281b6'))
-    expect(hexes[1]).toBe(bulbHex('#8bce00'))
-    expect(hexes[2]).toBe(bulbHex('#e03070'))
-    expect(hexes[3]).toBe(bulbHex('#1281b6'))
-  })
-
-  test('gives every bulb the main color when spreading is off', () => {
-    const commands = musicCommands(palette, [bulb('A'), bulb('B')], {
-      ...DEFAULT_MUSIC_CONFIG,
-      spreadColors: false,
-    })
     expect(new Set(commands.map(({ hex }) => hex))).toEqual(
       new Set([bulbHex('#1281b6')]),
     )
   })
 
   test('sends only x and y: no hex, hue, or transition', () => {
-    const [command] = musicCommands(palette, [bulb('A')], DEFAULT_MUSIC_CONFIG)
+    const [command] = musicCommands(color, [bulb('A')])
     expect(command?.payload).toEqual({
       color: hexToXy(bulbHex('#1281b6')),
     })
   })
 
   test('leaves bulbs that are off, and bulbs with no color, alone', () => {
-    const commands = musicCommands(
-      palette,
-      [bulb('Off', false), bulb('White', true, WHITE), bulb('On')],
-      DEFAULT_MUSIC_CONFIG,
-    )
+    const commands = musicCommands(color, [
+      bulb('Off', false),
+      bulb('White', true, WHITE),
+      bulb('On'),
+    ])
     expect(commands.map(({ name }) => name)).toEqual(['On'])
   })
 
   test('turns lit bulbs warm white for a cover with no color', () => {
-    const commands = musicCommands(
-      [],
-      [bulb('Color'), bulb('White', true, WHITE), bulb('Plain', true, PLAIN)],
-      DEFAULT_MUSIC_CONFIG,
-    )
+    const commands = musicCommands(Option.none(), [
+      bulb('Color'),
+      bulb('White', true, WHITE),
+      bulb('Plain', true, PLAIN),
+    ])
     expect(commands.map(({ name, payload }) => [name, payload])).toEqual([
       ['Color', { color_temp: WARM_WHITE_COLOR_TEMP }],
       ['White', { color_temp: WARM_WHITE_COLOR_TEMP }],

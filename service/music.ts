@@ -27,7 +27,7 @@ import { type FlashPort, type JsonObject, isLightOn } from './flash'
 /*
  * Music colors. Listens to the music server's `/now-playing` feed and, once a
  * new song has played for a moment, paints the bulbs in one group with its
- * cover's colors. Waiting for the song to settle keeps a run of skips from
+ * cover's color. Waiting for the song to settle keeps a run of skips from
  * flickering the bulbs. Commands run under the same lock as the PR flash, so
  * a flash never restores colors over a song change or the other way round.
  */
@@ -74,10 +74,7 @@ export type MusicSync = Readonly<{
 // DECISION
 
 const songKey = (nowPlaying: NowPlaying): string =>
-  [
-    nowPlaying.track?.videoId ?? '',
-    ...Array.map(nowPlaying.palette, ({ hex }) => hex),
-  ].join(' ')
+  [nowPlaying.track?.videoId ?? '', nowPlaying.color ?? ''].join(' ')
 
 export type Decision =
   | Readonly<{ _tag: 'Wait' }>
@@ -113,7 +110,7 @@ export const decide = (
 // APPLY
 
 type ApplyResult =
-  | Readonly<{ _tag: 'Applied'; colors: ReadonlyArray<string>; lights: number }>
+  | Readonly<{ _tag: 'Applied'; color: string; lights: number }>
   | Readonly<{ _tag: 'Skipped'; reason: string }>
 
 const overlaps = (
@@ -153,11 +150,7 @@ export const applySong = <E>(
         capabilities: lights.capabilitiesOf(name),
       })),
     )
-    const commands = musicCommands(
-      Array.map(nowPlaying.palette, ({ hex }) => hex),
-      bulbs,
-      config,
-    )
+    const commands = musicCommands(Option.fromNullOr(nowPlaying.color), bulbs)
     const first = commands[0]
     if (first === undefined) {
       return {
@@ -187,7 +180,7 @@ export const applySong = <E>(
     )
     return {
       _tag: 'Applied',
-      colors: Array.dedupe(Array.map(commands, ({ hex }) => hex)),
+      color: first.hex,
       lights: commands.length,
     }
   })
@@ -245,7 +238,7 @@ export const makeMusicSync = <E>(
         return
       }
       yield* ports.lights.log(
-        `music colors: ${title} on ${result.lights} lights (${result.colors.join(' ')})`,
+        `music colors: ${title} on ${result.lights} lights (${result.color})`,
       )
       yield* Ref.set(lastSkipRef, Option.none())
       yield* Ref.set(
@@ -253,7 +246,7 @@ export const makeMusicSync = <E>(
         Option.some({
           at: yield* ports.now,
           title,
-          colors: result.colors,
+          color: result.color,
           lights: result.lights,
         }),
       )
@@ -292,7 +285,7 @@ export const makeMusicSync = <E>(
                 artists: nowPlaying.track.artists,
                 isPlaying: nowPlaying.playing,
                 isOnTv: nowPlaying.device?.kind === 'Tv',
-                colors: Array.map(nowPlaying.palette, ({ hex }) => hex),
+                maybeColor: Option.fromNullOr(nowPlaying.color),
               }),
         ),
         maybeLastApplied: yield* Ref.get(lastAppliedRef),

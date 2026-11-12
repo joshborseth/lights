@@ -3,9 +3,9 @@ import { Array, Option, Schema, String, pipe } from 'effect'
 import { hexToXy } from './automation'
 
 /*
- * Music colors: while a song plays, the bulbs in one group take the colors of
+ * Music colors: while a song plays, the bulbs in one group take the color of
  * its album cover. The music server (`~/.t3/projects/music`) sends the song
- * and the cover's colors over a read-only WebSocket at `/now-playing`; the
+ * and the cover's one color over a read-only WebSocket at `/now-playing`; the
  * automations service listens there and sends the bulb commands, following
  * the rules in docs/migration-plan.md.
  */
@@ -17,8 +17,6 @@ export const MusicConfig = Schema.Struct({
   group: Schema.String,
   /** Only follow music that plays on the TV, not a phone in someone's pocket. */
   onlyOnTv: Schema.Boolean,
-  /** Give different bulbs different colors from the cover. */
-  spreadColors: Schema.Boolean,
 })
 export type MusicConfig = typeof MusicConfig.Type
 
@@ -26,7 +24,6 @@ export const DEFAULT_MUSIC_CONFIG: MusicConfig = {
   isEnabled: false,
   group: 'All Lights',
   onlyOnTv: true,
-  spreadColors: true,
 }
 
 export const musicConfigProblem = (
@@ -52,9 +49,8 @@ export const NowPlaying = Schema.Struct({
   ),
   playing: Schema.Boolean,
   device: Schema.NullOr(Schema.Struct({ kind: Schema.String })),
-  palette: Schema.Array(
-    Schema.Struct({ hex: Schema.String.check(Schema.isPattern(HEX)) }),
-  ),
+  /** The cover's color, or null for a black, white, or grey cover. */
+  color: Schema.NullOr(Schema.String.check(Schema.isPattern(HEX))),
 })
 export type NowPlaying = typeof NowPlaying.Type
 
@@ -74,14 +70,15 @@ export const MusicSong = Schema.Struct({
   artists: Schema.String,
   isPlaying: Schema.Boolean,
   isOnTv: Schema.Boolean,
-  colors: Schema.Array(Schema.String),
+  maybeColor: Schema.OptionFromNullOr(Schema.String),
 })
 export type MusicSong = typeof MusicSong.Type
 
 export const MusicApplied = Schema.Struct({
   at: Schema.Number,
   title: Schema.String,
-  colors: Schema.Array(Schema.String),
+  /** The color the bulbs were sent: the cover's, or warm white. */
+  color: Schema.String,
   lights: Schema.Number,
 })
 export type MusicApplied = typeof MusicApplied.Type
@@ -104,10 +101,8 @@ export const MUSIC_API_PATH = '/automations/music'
 
 /** Warm white for covers with no color: black, white, or grey. */
 export const WARM_WHITE_COLOR_TEMP = 370
-/** At most this many cover colors are spread across the bulbs. */
-const SPREAD_COLORS = 3
 /**
- * Bulbs wash out pale colors to near white, so every cover color is pushed to
+ * Bulbs wash out pale colors to near white, so the cover color is pushed to
  * at least this saturation. Its hue stays the same.
  */
 const MIN_SATURATION = 0.7
@@ -193,18 +188,17 @@ const byName = (x: MusicBulb, y: MusicBulb): number =>
   x.name < y.name ? -1 : x.name > y.name ? 1 : 0
 
 /**
- * One command per bulb that is on and can show the result. Bulbs that are
- * off stay off. Colors go as x and y with no `transition`, and brightness is
- * left alone. A cover with no color turns bulbs warm white instead, where
- * they take a color temperature.
+ * One command per bulb that is on and can show the result, all in the cover's
+ * one color. Bulbs that are off stay off. The color goes as x and y with no
+ * `transition`, and brightness is left alone. A cover with no color turns
+ * bulbs warm white instead, where they take a color temperature.
  */
 export const musicCommands = (
-  palette: ReadonlyArray<string>,
+  maybeColor: Option.Option<string>,
   bulbs: ReadonlyArray<MusicBulb>,
-  config: MusicConfig,
 ): ReadonlyArray<MusicCommand> => {
   const lit = [...bulbs].filter(bulb => bulb.isOn).sort(byName)
-  if (Array.isReadonlyArrayEmpty(palette)) {
+  if (Option.isNone(maybeColor)) {
     return pipe(
       lit,
       Array.filter(bulb => bulb.capabilities.supportsColorTemp),
@@ -215,16 +209,14 @@ export const musicCommands = (
       })),
     )
   }
-  const colors = Array.map(
-    palette.slice(0, config.spreadColors ? SPREAD_COLORS : 1),
-    bulbHex,
-  )
+  const hex = bulbHex(maybeColor.value)
   return pipe(
     lit,
     Array.filter(bulb => bulb.capabilities.supportsColor),
-    Array.map((bulb, index) => {
-      const hex = colors[index % colors.length] ?? WARM_WHITE_HEX
-      return { name: bulb.name, payload: { color: hexToXy(hex) }, hex }
-    }),
+    Array.map(bulb => ({
+      name: bulb.name,
+      payload: { color: hexToXy(hex) },
+      hex,
+    })),
   )
 }

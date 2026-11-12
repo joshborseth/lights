@@ -697,16 +697,6 @@ const musicRowStatus = (snapshot: MusicSnapshot): RowStatus => {
   })
 }
 
-const colorDotsView = (
-  colors: ReadonlyArray<string>,
-  sizeClass: string,
-  h: HtmlBuilder<Message>,
-): Html =>
-  h.span(
-    [h.Class('flex shrink-0 items-center -space-x-1.5')],
-    Array.map(colors, hex => colorDotView(hex, sizeClass, false, h)),
-  )
-
 const musicRowView = (model: Model, h: HtmlBuilder<Message>): Html =>
   MusicRemote.match(model.music, {
     Loading: () =>
@@ -718,9 +708,9 @@ const musicRowView = (model: Model, h: HtmlBuilder<Message>): Html =>
       ),
     Loaded: ({ snapshot }) => {
       const status = musicRowStatus(snapshot)
-      const colors = Option.match(snapshot.maybeLastApplied, {
-        onNone: () => [MUSIC_IDLE_HEX],
-        onSome: ({ colors }) => colors.slice(0, 3),
+      const color = Option.match(snapshot.maybeLastApplied, {
+        onNone: () => MUSIC_IDLE_HEX,
+        onSome: ({ color }) => color,
       })
       return h.div(
         [h.Class('relative flex items-center gap-3 pr-4 hover:bg-muted/40')],
@@ -744,7 +734,7 @@ const musicRowView = (model: Model, h: HtmlBuilder<Message>): Html =>
                     ),
                   ),
                 ],
-                [colorDotsView(colors, 'size-5', h)],
+                [colorDotView(color, 'size-5', false, h)],
               ),
               h.span(
                 [h.Class('flex min-w-0 flex-col gap-0.5')],
@@ -802,7 +792,7 @@ const musicToggleView = (
 const factLineView = (
   label: string,
   value: string,
-  colors: ReadonlyArray<string>,
+  maybeColor: Option.Option<string>,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
@@ -815,9 +805,10 @@ const factLineView = (
           h.p([h.Class('break-words text-sm')], [value]),
         ],
       ),
-      Array.isReadonlyArrayEmpty(colors)
-        ? h.empty
-        : colorDotsView(colors, 'size-6', h),
+      Option.match(maybeColor, {
+        onNone: () => h.empty,
+        onSome: hex => colorDotView(hex, 'size-6', false, h),
+      }),
     ],
   )
 
@@ -862,7 +853,7 @@ const musicScreen = (
               h.p(
                 [h.Class('text-sm text-muted-foreground')],
                 [
-                  'When a new song starts, the lights that are on take the colors of its album cover. Lights that are off stay off, and brightness stays where it is.',
+                  'When a new song starts, the lights that are on take the color of its album cover, the same color the music app shows. Lights that are off stay off, and brightness stays where it is.',
                 ],
               ),
               h.div(
@@ -871,10 +862,10 @@ const musicScreen = (
                   factLineView(
                     musicConnectionLabel(snapshot),
                     musicSongLine(snapshot),
-                    Option.match(snapshot.maybeSong, {
-                      onNone: () => [],
-                      onSome: ({ colors }) => colors,
-                    }),
+                    Option.flatMap(
+                      snapshot.maybeSong,
+                      ({ maybeColor }) => maybeColor,
+                    ),
                     h,
                   ),
                   Option.match(snapshot.maybeLastApplied, {
@@ -883,7 +874,7 @@ const musicScreen = (
                       factLineView(
                         `Lights changed ${elapsed(snapshot.generatedAt, applied.at)}`,
                         `${applied.title} on ${applied.lights} ${applied.lights === 1 ? 'light' : 'lights'}`,
-                        applied.colors,
+                        Option.some(applied.color),
                         h,
                       ),
                   }),
@@ -926,14 +917,6 @@ const musicScreen = (
                     'Ignore music playing on a phone.',
                     config.onlyOnTv,
                     onlyOnTv => ({ ...config, onlyOnTv }),
-                    h,
-                  ),
-                  musicToggleView(
-                    model,
-                    'Mix colors',
-                    'Give bulbs different colors from the cover, up to three.',
-                    config.spreadColors,
-                    spreadColors => ({ ...config, spreadColors }),
                     h,
                   ),
                 ],

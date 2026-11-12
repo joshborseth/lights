@@ -35,7 +35,7 @@ const nowPlaying = (
   track: { videoId, title: videoId, artists: 'Artist' },
   playing: true,
   device: { kind: 'Tv' },
-  palette: [{ hex: '#1281b6' }, { hex: '#8bce00' }],
+  color: '#1281b6',
   ...overrides,
 })
 
@@ -228,7 +228,7 @@ describe('makeMusicSync', () => {
     const { sentBeforeSave, before } = await run([
       { _tag: 'Connected' },
       frame(nowPlaying('first')),
-      frame(nowPlaying('second', { palette: [{ hex: '#e03070' }] })),
+      frame(nowPlaying('second', { color: '#e03070' })),
     ])
     expect(before.connection).toBe('Connected')
     expect(Option.map(before.maybeLastApplied, ({ title }) => title)).toEqual(

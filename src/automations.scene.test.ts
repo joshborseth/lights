@@ -544,12 +544,12 @@ const music: MusicSnapshot = {
     artists: 'Nirvana',
     isPlaying: true,
     isOnTv: true,
-    colors: ['#1281b6', '#294e6a'],
+    maybeColor: Option.some('#1281b6'),
   }),
   maybeLastApplied: Option.some({
     at: 40_000,
     title: 'Nevermind',
-    colors: ['#0091ff', '#005eff'],
+    color: '#0091ff',
     lights: 3,
   }),
   maybeLastSkip: Option.none(),
@@ -604,7 +604,7 @@ describe('Music colors', () => {
       expect(text('Nevermind on 3 lights')).toExist(),
       expect(role('combobox')).toHaveValue('Bedroom'),
       expect(role('switch', { name: 'Only on the TV' })).toExist(),
-      expect(role('switch', { name: 'Mix colors' })).toExist(),
+      expect(role('switch', { name: 'Mix colors' })).not.toExist(),
     )
   })
 

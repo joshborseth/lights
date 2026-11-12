@@ -1,6 +1,7 @@
 import { Option } from 'effect'
 import {
   Command,
+  change,
   click,
   expect,
   given,
@@ -554,6 +555,7 @@ const music: MusicSnapshot = {
     lights: 3,
   }),
   maybeLastSkip: Option.none(),
+  maybeShow: Option.none(),
 }
 
 const withMusic = (
@@ -643,6 +645,52 @@ describe('Music colors', () => {
         ),
       ),
       expect(text('Left alone: No lights in Bedroom were on.')).toExist(),
+    )
+  })
+
+  test('offers the light show, off until turned on', () => {
+    scene(
+      { update, view },
+      given(withMusic(music, Automations.Screen.Music())),
+      expect(role('switch', { name: 'Light show' })).not.toBeChecked(),
+      expect(role('combobox', { name: 'Timing' })).not.toExist(),
+      click(role('switch', { name: 'Light show' })),
+      Command.expectHas(Automations.SaveMusic),
+      Command.resolve(
+        Automations.SaveMusic,
+        Automations.Message.SucceededSaveMusic({
+          snapshot: { ...music, config: { ...music.config, isShowOn: true } },
+        }),
+      ),
+      expect(role('switch', { name: 'Light show' })).toBeChecked(),
+      expect(text('Starts when a song plays.')).toExist(),
+      expect(role('combobox', { name: 'Timing' })).toHaveValue('0'),
+    )
+  })
+
+  test('shows what the light show is doing, and saves its timing', () => {
+    const showing: MusicSnapshot = {
+      ...music,
+      config: { ...music.config, isShowOn: true },
+      maybeShow: Option.some('Following the beat at 128 BPM · Chorus'),
+    }
+    scene(
+      { update, view },
+      given(withMusic(showing, Automations.Screen.Music())),
+      expect(text('Following the beat at 128 BPM · Chorus')).toExist(),
+      change(role('combobox', { name: 'Timing' }), '-100'),
+      Command.expectHas(Automations.SaveMusic),
+      Command.resolve(
+        Automations.SaveMusic,
+        Automations.Message.SucceededSaveMusic({
+          snapshot: {
+            ...showing,
+            config: { ...showing.config, showOffsetMs: -100 },
+          },
+        }),
+      ),
+      expect(role('combobox', { name: 'Timing' })).toHaveValue('-100'),
+      expect(text('100 ms earlier')).toExist(),
     )
   })
 

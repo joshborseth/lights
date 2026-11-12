@@ -40,7 +40,12 @@ import {
   draftProblem,
   updated,
 } from './automations'
-import { type MusicConfig, type MusicSnapshot } from './music'
+import {
+  MAX_SHOW_OFFSET_MS,
+  type MusicConfig,
+  type MusicSnapshot,
+  SHOW_OFFSET_STEP_MS,
+} from './music'
 import { type ScreenSnapshot } from './screen'
 
 const CARD =
@@ -818,6 +823,82 @@ const factLineView = (
     ],
   )
 
+const showOffsetLabel = (offsetMs: number): string =>
+  offsetMs === 0
+    ? 'On the beat'
+    : `${Math.abs(offsetMs)} ms ${offsetMs < 0 ? 'earlier' : 'later'}`
+
+const SHOW_OFFSETS: ReadonlyArray<number> = Array.makeBy(
+  (2 * MAX_SHOW_OFFSET_MS) / SHOW_OFFSET_STEP_MS + 1,
+  index => index * SHOW_OFFSET_STEP_MS - MAX_SHOW_OFFSET_MS,
+)
+
+const lightShowView = (
+  model: Model,
+  snapshot: MusicSnapshot,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const { config } = snapshot
+  return h.div(
+    [h.Class(cn(CARD, 'flex flex-col gap-4'))],
+    [
+      musicToggleView(
+        model,
+        'Light show',
+        'Move the lights with the song: low in quiet parts, a light chasing round on the beat, every light pumping in the chorus, dimming before a drop and hitting full when it lands.',
+        config.isShowOn,
+        isShowOn => ({ ...config, isShowOn }),
+        h,
+      ),
+      ...(config.isShowOn
+        ? [
+            Option.match(snapshot.maybeShow, {
+              onNone: () =>
+                h.p(
+                  [h.Class(CAPTION)],
+                  [
+                    config.isEnabled
+                      ? 'Starts when a song plays.'
+                      : `Starts when ${MUSIC_NAME} is on and a song plays.`,
+                  ],
+                ),
+              onSome: text => h.p([h.Class('text-sm')], [text]),
+            }),
+            fieldShell(
+              'Timing',
+              Option.some(
+                'If the lights land before the beat you hear, move them later; if after, earlier.',
+              ),
+              h.select(
+                [
+                  h.AriaLabel('Timing'),
+                  h.Value(`${config.showOffsetMs}`),
+                  h.Disabled(model.isSavingMusic),
+                  h.OnChange(value =>
+                    Message.ChangedMusicConfig({
+                      config: { ...config, showOffsetMs: Number(value) },
+                    }),
+                  ),
+                  h.Class(INPUT),
+                ],
+                Array.map(SHOW_OFFSETS, offsetMs =>
+                  h.option(
+                    [
+                      h.Value(`${offsetMs}`),
+                      h.Selected(offsetMs === config.showOffsetMs),
+                    ],
+                    [showOffsetLabel(offsetMs)],
+                  ),
+                ),
+              ),
+              h,
+            ),
+          ]
+        : []),
+    ],
+  )
+}
+
 const musicSongLine = (snapshot: MusicSnapshot): string =>
   Option.match(snapshot.maybeSong, {
     onNone: () => 'Nothing',
@@ -859,7 +940,7 @@ const musicScreen = (
               h.p(
                 [h.Class('text-sm text-muted-foreground')],
                 [
-                  'When a new song starts, the lights that are on take the color of its album cover, the same color the music app shows. Lights that are off stay off, and brightness stays where it is.',
+                  'When a new song starts, the lights that are on take the color of its album cover, the same color the music app shows. Lights that are off stay off, and brightness stays where it is unless the light show is on.',
                 ],
               ),
               h.div(
@@ -927,6 +1008,7 @@ const musicScreen = (
                   ),
                 ],
               ),
+              lightShowView(model, snapshot, h),
               h.p(
                 [h.Class(CAPTION)],
                 [

@@ -1,4 +1,4 @@
-import { Array, Option, Schema, String, pipe } from 'effect'
+import { Array, Effect, Option, Schema, String, pipe } from 'effect'
 
 import { hexToXy } from './automation'
 
@@ -12,11 +12,30 @@ import { hexToXy } from './automation'
 
 // CONFIG
 
+/** How far the light show may be moved against the sound, either way. */
+export const MAX_SHOW_OFFSET_MS = 300
+/** The steps the timing setting offers. */
+export const SHOW_OFFSET_STEP_MS = 50
+
 export const MusicConfig = Schema.Struct({
   isEnabled: Schema.Boolean,
   group: Schema.String,
   /** Only follow music that plays on the TV, not a phone in someone's pocket. */
   onlyOnTv: Schema.Boolean,
+  /**
+   * Move the lights with the song: beats, sections, and drops (see
+   * `musicShow.ts`). Missing from settings saved before the show.
+   */
+  isShowOn: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
+  /**
+   * Moves the show later (positive) or earlier (negative) than the beat, in
+   * milliseconds, for speakers or bulbs that lag.
+   */
+  showOffsetMs: Schema.Number.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(0)),
+  ),
 })
 export type MusicConfig = typeof MusicConfig.Type
 
@@ -24,6 +43,8 @@ export const DEFAULT_MUSIC_CONFIG: MusicConfig = {
   isEnabled: false,
   group: 'All Lights',
   onlyOnTv: true,
+  isShowOn: false,
+  showOffsetMs: 0,
 }
 
 export const musicConfigProblem = (
@@ -31,7 +52,12 @@ export const musicConfigProblem = (
 ): Option.Option<string> =>
   String.isEmpty(String.trim(config.group))
     ? Option.some('Choose a group for the music colors.')
-    : Option.none()
+    : !Number.isInteger(config.showOffsetMs) ||
+        Math.abs(config.showOffsetMs) > MAX_SHOW_OFFSET_MS
+      ? Option.some(
+          `Keep the show timing within ${MAX_SHOW_OFFSET_MS} ms of the beat.`,
+        )
+      : Option.none()
 
 // WHAT THE MUSIC SERVER SENDS
 
@@ -50,6 +76,17 @@ export const MusicCue = Schema.Struct({
 })
 export type MusicCue = typeof MusicCue.Type
 
+/**
+ * Where the song is: `positionSeconds` into `videoId` at server time `at`
+ * (epoch ms), moving on in real time while it plays.
+ */
+export const MusicClock = Schema.Struct({
+  videoId: Schema.String,
+  positionSeconds: Schema.Number,
+  at: Schema.Number,
+})
+export type MusicClock = typeof MusicClock.Type
+
 /** The parts of the music server's `NowPlaying` frame that the lights use. */
 export const NowPlaying = Schema.Struct({
   _tag: Schema.Literal('NowPlaying'),
@@ -66,6 +103,8 @@ export const NowPlaying = Schema.Struct({
   color: Schema.NullOr(Schema.String.check(Schema.isPattern(HEX))),
   /** Missing from music servers built before cues. */
   cue: Schema.optionalKey(Schema.NullOr(MusicCue)),
+  /** Null while paused. Missing from music servers built before the show. */
+  clock: Schema.optionalKey(Schema.NullOr(MusicClock)),
 })
 export type NowPlaying = typeof NowPlaying.Type
 
@@ -123,6 +162,8 @@ export const MusicSnapshot = Schema.Struct({
   maybeLastApplied: Schema.OptionFromNullOr(MusicApplied),
   /** Why the latest song left the lights alone, if it did. */
   maybeLastSkip: Schema.OptionFromNullOr(Schema.String),
+  /** What the light show is doing, while it is on. */
+  maybeShow: Schema.OptionFromNullOr(Schema.String),
 })
 export type MusicSnapshot = typeof MusicSnapshot.Type
 export const MusicSnapshotValue = Schema.toType(MusicSnapshot)

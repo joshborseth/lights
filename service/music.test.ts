@@ -224,6 +224,8 @@ describe('makeMusicSync', () => {
           {
             lights: port,
             withLightsLock: effect => effect,
+            tryLightsLock: effect => Effect.map(effect, Option.some),
+            fetchAnalysis: () => Effect.succeed(Option.none()),
             saveConfig: next => Effect.sync(() => void saved.push(next)),
             feed: Stream.fromQueue(queue),
             follow: kinds => Effect.sync(() => void followed.push(kinds)),

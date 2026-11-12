@@ -60,6 +60,7 @@ const setup = () => {
     pollOnce: Effect.void,
     waitForFlashToFinish: Effect.void,
     withLightsLock: effect => effect,
+    tryLightsLock: effect => Effect.map(effect, Option.some),
     run: Effect.void,
   }
   const saveMusic = vi.fn<(config: MusicConfig) => void>()
@@ -71,6 +72,7 @@ const setup = () => {
       maybeSong: Option.none(),
       maybeLastApplied: Option.none(),
       maybeLastSkip: Option.none(),
+      maybeShow: Option.none(),
     }),
     saveConfig: config => Effect.sync(() => saveMusic(config)),
     run: Effect.void,

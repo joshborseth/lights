@@ -26,7 +26,14 @@ import {
   followedKinds,
   musicCommands,
 } from '../src/music'
+import { type MusicAnalysis, MusicAnalysisJson } from '../src/musicShow'
 import { type FlashPort, type JsonObject, isLightOn } from './flash'
+import {
+  type ShowPorts,
+  isMidSongChange,
+  makeLightShow,
+  showTarget,
+} from './musicShow'
 
 /*
  * Music colors. Listens to the music server's `/now-playing` feed and paints
@@ -69,6 +76,8 @@ export type MusicLightsPort<E> = Pick<
 export type MusicPorts<E> = Readonly<{
   lights: MusicLightsPort<E>
   withLightsLock: <A, E2>(effect: Effect.Effect<A, E2>) => Effect.Effect<A, E2>
+  tryLightsLock: ShowPorts<E>['tryLightsLock']
+  fetchAnalysis: ShowPorts<E>['fetchAnalysis']
   saveConfig: (config: MusicConfig) => Effect.Effect<void>
   feed: Stream.Stream<FeedEvent>
   /** Tell the music server whose songs the bulbs follow. */
@@ -247,6 +256,15 @@ export const makeMusicSync = <E>(
     /** The latest cue, or null once there is none: a new one replaces it. */
     const cues = yield* Queue.sliding<MusicCue | null>(1)
     const lastCueRef = yield* Ref.make<MusicCue | null>(null)
+    const show = yield* makeLightShow(ports)
+
+    const followShow = Effect.gen(function* () {
+      const maybeNowPlaying = yield* Ref.get(nowPlayingRef)
+      if (Option.exists(maybeNowPlaying, isMidSongChange)) {
+        return
+      }
+      yield* show.follow(showTarget(maybeNowPlaying, yield* Ref.get(configRef)))
+    })
 
     const nudge = Queue.offer(nudges, undefined).pipe(Effect.asVoid)
 
@@ -363,7 +381,10 @@ export const makeMusicSync = <E>(
       Match.value(event).pipe(
         Match.tagsExhaustive({
           Connected: () => Ref.set(connectionRef, 'Connected'),
-          Disconnected: () => Ref.set(connectionRef, 'Unreachable'),
+          Disconnected: () =>
+            Ref.set(connectionRef, 'Unreachable').pipe(
+              Effect.andThen(show.follow(null)),
+            ),
           Frame: ({ text }) =>
             Option.match(decodeFrame(text), {
               onNone: () =>
@@ -371,6 +392,7 @@ export const makeMusicSync = <E>(
               onSome: nowPlaying =>
                 Ref.set(nowPlayingRef, Option.some(nowPlaying)).pipe(
                   Effect.andThen(takeCue(nowPlaying)),
+                  Effect.andThen(followShow),
                   Effect.andThen(nudge),
                 ),
             }),
@@ -398,6 +420,7 @@ export const makeMusicSync = <E>(
         ),
         maybeLastApplied: yield* Ref.get(lastAppliedRef),
         maybeLastSkip: yield* Ref.get(lastSkipRef),
+        maybeShow: yield* show.status,
       }
     })
 
@@ -408,6 +431,7 @@ export const makeMusicSync = <E>(
           yield* Ref.set(configRef, config)
           yield* ports.saveConfig(config)
           yield* ports.follow(followedKinds(config))
+          yield* followShow
           // NOTE: New settings apply to the song already playing.
           yield* Ref.set(appliedKeyRef, Option.none())
           yield* Ref.set(lastSkipRef, Option.none())
@@ -419,6 +443,7 @@ export const makeMusicSync = <E>(
             Effect.flatMap(config => ports.follow(followedKinds(config))),
           ),
           ports.feed.pipe(Stream.runForEach(handle)),
+          show.run,
           Stream.fromQueue(cues).pipe(
             Stream.switchMap(cue =>
               cue === null ? Stream.empty : Stream.fromEffect(paintCue(cue)),
@@ -434,6 +459,53 @@ export const makeMusicSync = <E>(
       ),
     }
   })
+
+// ANALYSIS
+
+/** The music server analyzes a song on the spot, after it downloads. */
+const ANALYSIS_TIMEOUT_MS = 150_000
+
+const decodeAnalysis = Schema.decodeUnknownOption(MusicAnalysisJson)
+
+/** Where the music server serves song analyses, next to its feed. */
+export const analysisUrl = (feedUrl: string, videoId: string): string => {
+  const url = new URL(feedUrl)
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
+  url.pathname = '/tv/analysis'
+  url.search = new URLSearchParams({ videoId }).toString()
+  return url.toString()
+}
+
+/**
+ * Each song's beats, bars, sections, and drops from the music server, the
+ * same analysis its TV visuals use. None when it has none for the song.
+ */
+export const makeAnalysisFetcher =
+  (feedUrl: string, log: (text: string) => void) =>
+  (videoId: string): Effect.Effect<Option.Option<MusicAnalysis>> =>
+    Effect.tryPromise(async () => {
+      const response = await fetch(analysisUrl(feedUrl, videoId), {
+        signal: AbortSignal.timeout(ANALYSIS_TIMEOUT_MS),
+      })
+      return response.ok ? await response.text() : undefined
+    }).pipe(
+      Effect.map(text =>
+        text === undefined ? Option.none() : decodeAnalysis(text),
+      ),
+      Effect.tap(maybeAnalysis =>
+        Effect.sync(() => {
+          if (Option.isNone(maybeAnalysis)) {
+            log(`light show: no analysis for ${videoId}`)
+          }
+        }),
+      ),
+      Effect.catch(error =>
+        Effect.sync(() => {
+          log(`light show: couldn't get the analysis for ${videoId}: ${error}`)
+          return Option.none<MusicAnalysis>()
+        }),
+      ),
+    )
 
 // FEED
 

@@ -65,6 +65,7 @@ const music: MusicSnapshot = {
   maybeSong: Option.none(),
   maybeLastApplied: Option.none(),
   maybeLastSkip: Option.none(),
+  maybeShow: Option.none(),
 }
 
 const musicLoaded: Model = {

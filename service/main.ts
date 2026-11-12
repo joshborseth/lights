@@ -7,7 +7,12 @@ import { makeAccountHealth, makeEngine } from './engine'
 import { MissingTokenError, makeGitHub } from './github'
 import { makeHandler } from './http'
 import { type LightsError, connectLights } from './mqtt'
-import { connectFeed, connectMusicFeed, makeMusicSync } from './music'
+import {
+  connectFeed,
+  connectMusicFeed,
+  makeAnalysisFetcher,
+  makeMusicSync,
+} from './music'
 import { makeScreenSync } from './screen'
 import {
   defaultPaths,
@@ -91,14 +96,14 @@ const program = Effect.gen(function* () {
     health,
   )
 
-  const musicFeed = connectMusicFeed(
-    process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL,
-    log,
-  )
+  const musicFeedUrl = process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL
+  const musicFeed = connectMusicFeed(musicFeedUrl, log)
   const music = yield* makeMusicSync(
     {
       lights,
       withLightsLock: engine.withLightsLock,
+      tryLightsLock: engine.tryLightsLock,
+      fetchAnalysis: makeAnalysisFetcher(musicFeedUrl, log),
       saveConfig: saveMusicConfig(paths),
       feed: musicFeed.events,
       follow: musicFeed.follow,

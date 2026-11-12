@@ -86,15 +86,17 @@ const program = Effect.gen(function* () {
     health,
   )
 
+  const musicFeed = connectMusicFeed(
+    process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL,
+    log,
+  )
   const music = yield* makeMusicSync(
     {
       lights,
       withLightsLock: engine.withLightsLock,
       saveConfig: saveMusicConfig(paths),
-      feed: connectMusicFeed(
-        process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL,
-        log,
-      ),
+      feed: musicFeed.events,
+      follow: musicFeed.follow,
       now: Clock.currentTimeMillis,
       errorText: (error: LightsError) => error.reason,
     },

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import {
   DEFAULT_MUSIC_CONFIG,
   type MusicConfig,
+  type MusicFollow,
   type NowPlaying,
 } from '../src/music'
 import { type JsonObject, type LightStates } from './flash'
@@ -13,6 +14,7 @@ import {
   applySong,
   decide,
   makeMusicSync,
+  shouldPaintCue,
 } from './music'
 
 type Sent =
@@ -123,6 +125,34 @@ describe('decide', () => {
   })
 })
 
+describe('shouldPaintCue', () => {
+  const cue = { videoId: 'a', color: '#1281b6', at: 0 }
+  const onTv = Option.some(nowPlaying('a'))
+
+  test('paints while on and following the player', () => {
+    expect(shouldPaintCue(cue, onTv, ENABLED, Option.none())).toBe(true)
+    expect(shouldPaintCue(cue, onTv, DEFAULT_MUSIC_CONFIG, Option.none())).toBe(
+      false,
+    )
+    const onPhone = Option.some(nowPlaying('a', { device: { kind: 'Web' } }))
+    expect(shouldPaintCue(cue, onPhone, ENABLED, Option.none())).toBe(false)
+    expect(
+      shouldPaintCue(
+        cue,
+        onPhone,
+        { ...ENABLED, onlyOnTv: false },
+        Option.none(),
+      ),
+    ).toBe(true)
+  })
+
+  test('leaves alone bulbs that already show it', () => {
+    expect(shouldPaintCue(cue, onTv, ENABLED, Option.some('a #1281b6'))).toBe(
+      false,
+    )
+  })
+})
+
 describe('applySong', () => {
   test('colors only the lights that are on, as x and y', async () => {
     const { port, sent } = makePort({ states: { Orb: ON, Shroom: OFF } })
@@ -182,9 +212,11 @@ describe('makeMusicSync', () => {
   const run = async (
     events: ReadonlyArray<FeedEvent>,
     config: MusicConfig = ENABLED,
+    settleMs = 20,
   ) => {
     const { port, sent } = makePort({ states: { Orb: ON, Shroom: ON } })
     const saved: Array<MusicConfig> = []
+    const followed: Array<MusicFollow['kinds']> = []
     return Effect.runPromise(
       Effect.gen(function* () {
         const queue = yield* Queue.unbounded<FeedEvent>()
@@ -194,9 +226,10 @@ describe('makeMusicSync', () => {
             withLightsLock: effect => effect,
             saveConfig: next => Effect.sync(() => void saved.push(next)),
             feed: Stream.fromQueue(queue),
-            now: Effect.succeed(1000),
+            follow: kinds => Effect.sync(() => void followed.push(kinds)),
+            now: Effect.sync(() => Date.now()),
             errorText: error => error,
-            settleMs: 20,
+            settleMs,
           },
           config,
         )
@@ -214,6 +247,7 @@ describe('makeMusicSync', () => {
           before,
           after: yield* sync.snapshot,
           saved,
+          followed,
         }
       }),
     )
@@ -255,6 +289,79 @@ describe('makeMusicSync', () => {
     ])
     expect(sentBeforeSave).toBe(0)
     expect(before.maybeSong).toEqual(Option.none())
+  })
+
+  test('tells the music server it follows the TV, and again on a change', async () => {
+    const { followed } = await run([], DEFAULT_MUSIC_CONFIG)
+    expect(followed).toEqual([[], ['Tv']])
+    const { followed: everywhere } = await run([], {
+      ...ENABLED,
+      onlyOnTv: false,
+    })
+    expect(everywhere[0]).toEqual(['Tv', 'Web'])
+  })
+
+  test('paints a cue at once, without waiting for the song to settle', async () => {
+    const at = Date.now()
+    const { sentBeforeSave, before } = await run(
+      [
+        { _tag: 'Connected' },
+        frame(
+          nowPlaying('a', {
+            playing: false,
+            cue: { videoId: 'a', color: '#e03070', at },
+          }),
+        ),
+        frame(
+          nowPlaying('a', {
+            color: '#e03070',
+            cue: { videoId: 'a', color: '#e03070', at },
+          }),
+        ),
+      ],
+      ENABLED,
+      60_000,
+    )
+    expect(sentBeforeSave).toBe(2)
+    expect(Option.map(before.maybeLastApplied, ({ title }) => title)).toEqual(
+      Option.some('a'),
+    )
+  })
+
+  test('paints the next song when its cue comes due, and only once', async () => {
+    const cue = { videoId: 'b', color: '#e03070', at: Date.now() + 20 }
+    const { sentBeforeSave, before } = await run(
+      [
+        { _tag: 'Connected' },
+        frame(nowPlaying('a', { cue })),
+        frame(nowPlaying('b', { color: '#e03070', cue })),
+      ],
+      ENABLED,
+      // NOTE: b settles after its cue, and finds the bulbs already showing it.
+      60,
+    )
+    expect(sentBeforeSave).toBe(2)
+    expect(Option.map(before.maybeLastApplied, ({ title }) => title)).toEqual(
+      Option.some('b'),
+    )
+  })
+
+  test('a cue the session moves away from before its moment paints nothing', async () => {
+    const { sentBeforeSave } = await run(
+      [
+        { _tag: 'Connected' },
+        frame(
+          nowPlaying('a', {
+            playing: false,
+            cue: { videoId: 'b', color: '#e03070', at: Date.now() + 40 },
+          }),
+        ),
+        frame(nowPlaying('a', { playing: false, cue: null })),
+      ],
+      ENABLED,
+      60_000,
+    )
+    expect(sentBeforeSave).toBe(0)
   })
 
   test('reports a lost connection', async () => {

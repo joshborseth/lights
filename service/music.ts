@@ -17,19 +17,30 @@ import {
   type MusicApplied,
   type MusicConfig,
   type MusicConnection,
+  type MusicCue,
+  type MusicFollow,
+  MusicFollowJson,
   type MusicSnapshot,
   type NowPlaying,
   NowPlayingJson,
+  followedKinds,
   musicCommands,
 } from '../src/music'
 import { type FlashPort, type JsonObject, isLightOn } from './flash'
 
 /*
- * Music colors. Listens to the music server's `/now-playing` feed and, once a
- * new song has played for a moment, paints the bulbs in one group with its
- * cover's color. Waiting for the song to settle keeps a run of skips from
- * flickering the bulbs. Commands run under the same lock as the PR flash, so
- * a flash never restores colors over a song change or the other way round.
+ * Music colors. Listens to the music server's `/now-playing` feed and paints
+ * the bulbs in one group with the cover color of the song playing. Commands
+ * run under the same lock as the PR flash, so a flash never restores colors
+ * over a song change or the other way round.
+ *
+ * On the TV the bulbs change with the music. The service tells the music
+ * server it follows the TV (`Follow`), so the TV holds each song it jumps to
+ * until it is loaded and its color known, then starts it with a cue for now.
+ * A song that follows the last with no gap gets its cue ahead of time. A cue
+ * is painted at its moment, with no waiting. Anything without a cue (music on
+ * a phone, an older music server) is painted once the song has played for a
+ * moment, so a run of skips doesn't flicker the bulbs.
  */
 
 /** How long a song must stay current before the bulbs follow it. */
@@ -60,6 +71,8 @@ export type MusicPorts<E> = Readonly<{
   withLightsLock: <A, E2>(effect: Effect.Effect<A, E2>) => Effect.Effect<A, E2>
   saveConfig: (config: MusicConfig) => Effect.Effect<void>
   feed: Stream.Stream<FeedEvent>
+  /** Tell the music server whose songs the bulbs follow. */
+  follow: (kinds: MusicFollow['kinds']) => Effect.Effect<void>
   now: Effect.Effect<number>
   errorText: (error: E) => string
   settleMs?: number
@@ -73,8 +86,26 @@ export type MusicSync = Readonly<{
 
 // DECISION
 
+const colorKey = (videoId: string, color: string | null): string =>
+  [videoId, color ?? ''].join(' ')
+
 const songKey = (nowPlaying: NowPlaying): string =>
-  [nowPlaying.track?.videoId ?? '', nowPlaying.color ?? ''].join(' ')
+  colorKey(nowPlaying.track?.videoId ?? '', nowPlaying.color)
+
+/**
+ * Whether the bulbs should take a cue's color: on, following this player, and
+ * not already showing it.
+ */
+export const shouldPaintCue = (
+  cue: MusicCue,
+  maybeNowPlaying: Option.Option<NowPlaying>,
+  config: MusicConfig,
+  maybeAppliedKey: Option.Option<string>,
+): boolean =>
+  config.isEnabled &&
+  (!config.onlyOnTv ||
+    Option.exists(maybeNowPlaying, ({ device }) => device?.kind === 'Tv')) &&
+  !Option.contains(maybeAppliedKey, colorKey(cue.videoId, cue.color))
 
 export type Decision =
   | Readonly<{ _tag: 'Wait' }>
@@ -120,7 +151,7 @@ const overlaps = (
 
 export const applySong = <E>(
   lights: MusicLightsPort<E>,
-  nowPlaying: NowPlaying,
+  song: Pick<NowPlaying, 'color'>,
   config: MusicConfig,
 ): Effect.Effect<ApplyResult, E> =>
   Effect.gen(function* () {
@@ -150,7 +181,7 @@ export const applySong = <E>(
         capabilities: lights.capabilitiesOf(name),
       })),
     )
-    const commands = musicCommands(Option.fromNullOr(nowPlaying.color), bulbs)
+    const commands = musicCommands(Option.fromNullOr(song.color), bulbs)
     const first = commands[0]
     if (first === undefined) {
       return {
@@ -201,6 +232,9 @@ export const makeMusicSync = <E>(
     const lastAppliedRef = yield* Ref.make(Option.none<MusicApplied>())
     const lastSkipRef = yield* Ref.make(Option.none<string>())
     const nudges = yield* Queue.sliding<void>(1)
+    /** The latest cue, or null once there is none: a new one replaces it. */
+    const cues = yield* Queue.sliding<MusicCue | null>(1)
+    const lastCueRef = yield* Ref.make<MusicCue | null>(null)
 
     const nudge = Queue.offer(nudges, undefined).pipe(Effect.asVoid)
 
@@ -218,39 +252,100 @@ export const makeMusicSync = <E>(
         yield* Ref.set(lastSkipRef, Option.some(decision.reason))
         return
       }
-      yield* Ref.set(appliedKeyRef, Option.some(decision.key))
-      const title = decision.nowPlaying.track?.title ?? ''
-      const result = yield* ports
-        .withLightsLock(applySong(ports.lights, decision.nowPlaying, config))
-        .pipe(
-          Effect.catch(error =>
-            Effect.succeed<ApplyResult>({
-              _tag: 'Skipped',
-              reason: `Couldn't reach the lights: ${ports.errorText(error)}`,
-            }),
-          ),
-        )
-      if (result._tag === 'Skipped') {
-        yield* ports.lights.log(
-          `music colors skipped ${title}: ${result.reason}`,
-        )
-        yield* Ref.set(lastSkipRef, Option.some(result.reason))
-        return
-      }
-      yield* ports.lights.log(
-        `music colors: ${title} on ${result.lights} lights (${result.color})`,
-      )
-      yield* Ref.set(lastSkipRef, Option.none())
-      yield* Ref.set(
-        lastAppliedRef,
-        Option.some({
-          at: yield* ports.now,
-          title,
-          color: result.color,
-          lights: result.lights,
-        }),
+      yield* paint(
+        decision.key,
+        decision.nowPlaying,
+        decision.nowPlaying.track?.title ?? '',
+        config,
       )
     })
+
+    /** Paint a cue's color at its moment, unless something replaces it first. */
+    const paintCue = (cue: MusicCue) =>
+      Effect.gen(function* () {
+        const wait = cue.at - (yield* ports.now)
+        if (wait > 0) {
+          yield* Effect.sleep(Duration.millis(wait))
+        }
+        const config = yield* Ref.get(configRef)
+        const maybeNowPlaying = yield* Ref.get(nowPlayingRef)
+        if (
+          !shouldPaintCue(
+            cue,
+            maybeNowPlaying,
+            config,
+            yield* Ref.get(appliedKeyRef),
+          )
+        ) {
+          return
+        }
+        const title = Option.match(
+          Option.flatMap(maybeNowPlaying, ({ track }) =>
+            Option.fromNullOr(track),
+          ),
+          {
+            onNone: () => cue.videoId,
+            onSome: track =>
+              track.videoId === cue.videoId ? track.title : 'the next song',
+          },
+        )
+        yield* paint(
+          colorKey(cue.videoId, cue.color),
+          { color: cue.color },
+          title,
+          config,
+        )
+      })
+
+    const paint = (
+      key: string,
+      song: Pick<NowPlaying, 'color'>,
+      title: string,
+      config: MusicConfig,
+    ) =>
+      Effect.gen(function* () {
+        yield* Ref.set(appliedKeyRef, Option.some(key))
+        const result = yield* ports
+          .withLightsLock(applySong(ports.lights, song, config))
+          .pipe(
+            Effect.catch(error =>
+              Effect.succeed<ApplyResult>({
+                _tag: 'Skipped',
+                reason: `Couldn't reach the lights: ${ports.errorText(error)}`,
+              }),
+            ),
+          )
+        if (result._tag === 'Skipped') {
+          yield* ports.lights.log(
+            `music colors skipped ${title}: ${result.reason}`,
+          )
+          yield* Ref.set(lastSkipRef, Option.some(result.reason))
+          return
+        }
+        yield* ports.lights.log(
+          `music colors: ${title} on ${result.lights} lights (${result.color})`,
+        )
+        yield* Ref.set(lastSkipRef, Option.none())
+        yield* Ref.set(
+          lastAppliedRef,
+          Option.some({
+            at: yield* ports.now,
+            title,
+            color: result.color,
+            lights: result.lights,
+          }),
+        )
+      })
+
+    /** Hand a frame's cue to the painter when it is new, or cancel one gone. */
+    const takeCue = (nowPlaying: NowPlaying) =>
+      Effect.gen(function* () {
+        const cue = nowPlaying.cue ?? null
+        const last = yield* Ref.getAndSet(lastCueRef, cue)
+        if (JSON.stringify(cue) !== JSON.stringify(last)) {
+          yield* Queue.offer(cues, cue)
+        }
+      })
 
     const handle = (event: FeedEvent): Effect.Effect<void> =>
       Match.value(event).pipe(
@@ -263,6 +358,7 @@ export const makeMusicSync = <E>(
                 ports.lights.log('music feed sent an unknown frame'),
               onSome: nowPlaying =>
                 Ref.set(nowPlayingRef, Option.some(nowPlaying)).pipe(
+                  Effect.andThen(takeCue(nowPlaying)),
                   Effect.andThen(nudge),
                 ),
             }),
@@ -299,6 +395,7 @@ export const makeMusicSync = <E>(
         Effect.gen(function* () {
           yield* Ref.set(configRef, config)
           yield* ports.saveConfig(config)
+          yield* ports.follow(followedKinds(config))
           // NOTE: New settings apply to the song already playing.
           yield* Ref.set(appliedKeyRef, Option.none())
           yield* Ref.set(lastSkipRef, Option.none())
@@ -306,7 +403,16 @@ export const makeMusicSync = <E>(
         }),
       run: Effect.all(
         [
+          Ref.get(configRef).pipe(
+            Effect.flatMap(config => ports.follow(followedKinds(config))),
+          ),
           ports.feed.pipe(Stream.runForEach(handle)),
+          Stream.fromQueue(cues).pipe(
+            Stream.switchMap(cue =>
+              cue === null ? Stream.empty : Stream.fromEffect(paintCue(cue)),
+            ),
+            Stream.runDrain,
+          ),
           Stream.fromQueue(nudges).pipe(
             Stream.debounce(Duration.millis(settleMs)),
             Stream.runForEach(() => consider),
@@ -319,15 +425,32 @@ export const makeMusicSync = <E>(
 
 // FEED
 
+const encodeFollow = Schema.encodeSync(MusicFollowJson)
+
+export type MusicFeed = Readonly<{
+  /** Events from the socket. It reconnects on its own while this runs. */
+  events: Stream.Stream<FeedEvent>
+  /** Say whose songs the bulbs follow, now and after every reconnect. */
+  follow: (kinds: MusicFollow['kinds']) => Effect.Effect<void>
+}>
+
 /**
- * The music server's `/now-playing` WebSocket as a stream of events. It
- * reconnects on its own, every few seconds, for as long as the stream runs.
+ * The music server's `/now-playing` WebSocket. It reconnects on its own,
+ * every few seconds, for as long as `events` runs, and says again whom the
+ * bulbs follow each time it connects.
  */
 export const connectMusicFeed = (
   url: string,
   log: (text: string) => void,
-): Stream.Stream<FeedEvent> =>
-  Stream.callback<FeedEvent>(queue =>
+): MusicFeed => {
+  let kinds: MusicFollow['kinds'] = []
+  let maybeOpenSocket: WebSocket | undefined
+
+  const sendFollow = (socket: WebSocket): void => {
+    socket.send(encodeFollow({ _tag: 'Follow', kinds }))
+  }
+
+  const events = Stream.callback<FeedEvent>(queue =>
     Effect.acquireRelease(
       Effect.sync(() => {
         let isClosed = false
@@ -340,7 +463,9 @@ export const connectMusicFeed = (
           maybeSocket = socket
           socket.addEventListener('open', () => {
             wasConnected = true
+            maybeOpenSocket = socket
             log(`connected to the music feed at ${url}`)
+            sendFollow(socket)
             Queue.offerUnsafe(queue, { _tag: 'Connected' })
           })
           socket.addEventListener('message', event => {
@@ -354,6 +479,9 @@ export const connectMusicFeed = (
               log('lost the music feed; retrying')
             }
             wasConnected = false
+            if (maybeOpenSocket === socket) {
+              maybeOpenSocket = undefined
+            }
             Queue.offerUnsafe(queue, { _tag: 'Disconnected' })
             if (!isClosed) {
               maybeTimer = setTimeout(connect, RECONNECT_MS)
@@ -371,3 +499,15 @@ export const connectMusicFeed = (
       close => Effect.sync(close),
     ),
   )
+
+  return {
+    events,
+    follow: next =>
+      Effect.sync(() => {
+        kinds = next
+        if (maybeOpenSocket !== undefined) {
+          sendFollow(maybeOpenSocket)
+        }
+      }),
+  }
+}

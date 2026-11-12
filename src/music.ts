@@ -37,6 +37,19 @@ export const musicConfigProblem = (
 
 const HEX = /^#[0-9a-f]{6}$/i
 
+/**
+ * When to change the lights for a song starting on the TV: the cover color of
+ * `videoId`, at server time `at` (epoch ms, the same clock as this machine).
+ * The TV holds a song it jumps to until the lights can change with it, and
+ * says ahead of time when the next song follows with no gap.
+ */
+export const MusicCue = Schema.Struct({
+  videoId: Schema.String,
+  color: Schema.NullOr(Schema.String.check(Schema.isPattern(HEX))),
+  at: Schema.Number,
+})
+export type MusicCue = typeof MusicCue.Type
+
 /** The parts of the music server's `NowPlaying` frame that the lights use. */
 export const NowPlaying = Schema.Struct({
   _tag: Schema.Literal('NowPlaying'),
@@ -51,10 +64,29 @@ export const NowPlaying = Schema.Struct({
   device: Schema.NullOr(Schema.Struct({ kind: Schema.String })),
   /** The cover's color, or null for a black, white, or grey cover. */
   color: Schema.NullOr(Schema.String.check(Schema.isPattern(HEX))),
+  /** Missing from music servers built before cues. */
+  cue: Schema.optionalKey(Schema.NullOr(MusicCue)),
 })
 export type NowPlaying = typeof NowPlaying.Type
 
 export const NowPlayingJson = Schema.fromJsonString(NowPlaying)
+
+/**
+ * What the lights tell the music server: whose songs they follow. While they
+ * follow the TV, it holds each song it jumps to until they can change with
+ * it.
+ */
+export const MusicFollow = Schema.Struct({
+  _tag: Schema.Literal('Follow'),
+  kinds: Schema.Array(Schema.Literals(['Tv', 'Web'])),
+})
+export type MusicFollow = typeof MusicFollow.Type
+
+export const MusicFollowJson = Schema.fromJsonString(MusicFollow)
+
+/** The players whose songs the bulbs follow with these settings. */
+export const followedKinds = (config: MusicConfig): MusicFollow['kinds'] =>
+  !config.isEnabled ? [] : config.onlyOnTv ? ['Tv'] : ['Tv', 'Web']
 
 // STATUS
 

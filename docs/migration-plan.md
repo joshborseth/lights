@@ -90,10 +90,11 @@ Browser  --- /automations ---> lights-lan
 
 #### Music colors
 
-While a song plays, the bulbs in one group take the color of its album cover. The music server (`~/.t3/projects/music`, `music.service`) sends each song and the one color its cover reads as (the same color its full player is tinted with) over a read-only WebSocket, `ws://127.0.0.1:4310/now-playing` (override with `MUSIC_FEED_URL`). `service/music.ts` listens there and reconnects every 5 seconds when it can't.
+While a song plays, the bulbs in one group take the color of its album cover. The music server (`~/.t3/projects/music`, `music.service`) sends each song and the one color its cover reads as (the same color its full player is tinted with) over a WebSocket, `ws://127.0.0.1:4310/now-playing` (override with `MUSIC_FEED_URL`). `service/music.ts` listens there and reconnects every 5 seconds when it can't.
 
 - Off by default. Settings save as soon as they change, with no save bar, to `~/.config/pr-merge-lights/music.json`, and are served at `/automations/music`.
-- A song must stay current for 1.5 seconds before the bulbs follow it, so a run of skips doesn't flicker them. Each song is applied once; changing a setting applies it again to the song already playing.
+- On the TV the bulbs change with the music. The service tells the music server whose songs it follows (`Follow`: `Tv`, `Tv` and `Web`, or nothing while off), on every connect and every settings change. While it follows the TV, the TV holds each song it jumps to until the song is loaded and its color known (at most 3 seconds), then starts it, and the frame carries a `cue` for that moment. A song that follows the last with no gap gets its `cue` about half a second ahead. A cue is painted at its moment, with no waiting, and a new cue or none cancels one still pending.
+- Anything without a cue (music on a phone, a music server built before cues) must stay current for 1.5 seconds before the bulbs follow it, so a run of skips doesn't flicker them. Each song is applied once; changing a setting applies it again to the song already playing.
 - Only bulbs that are on change, and they all take the same color. Brightness stays where it is. The color goes as x and y with no `transition`, pushed to at least 70% saturation because bulbs wash pale colors out to white.
 - A black, white, or grey cover (the music server sends `color: null`) sends `color_temp` 370 (warm white) to bulbs that take color temperature.
 - Only on the TV (on by default) ignores music playing on a phone. A song skipped for that reason is applied when playback moves to the TV.

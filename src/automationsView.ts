@@ -36,10 +36,12 @@ import {
   type Reveal,
   SaveState,
   Screen,
+  ScreenRemote,
   draftProblem,
   updated,
 } from './automations'
 import { type MusicConfig, type MusicSnapshot } from './music'
+import { type ScreenSnapshot } from './screen'
 
 const CARD =
   'flex flex-col gap-4 rounded-xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10'
@@ -180,6 +182,7 @@ const loadedView = (
         Connections: ({ maybeOpenSection }) =>
           connectionsScreen(model, snapshot, draft, maybeOpenSection, h),
         Music: () => musicScreen(model, groupNames, h),
+        ScreenColors: () => screenColorsScreen(model, groupNames, h),
       }),
       saveBarView(model, draft, h),
     ],
@@ -600,7 +603,10 @@ const listScreen = (
         ],
       ),
       h.h2([h.Class(cn(GROUP_LABEL, 'mt-2'))], ['Home']),
-      h.div([h.Class(LIST)], [musicRowView(model, h)]),
+      h.div(
+        [h.Class(LIST)],
+        [musicRowView(model, h), screenColorsRowView(model, h)],
+      ),
       h.div(
         [h.Class(cn(LIST, 'mt-2'))],
         [
@@ -925,6 +931,254 @@ const musicScreen = (
                 [h.Class(CAPTION)],
                 [
                   'Black, white, and grey covers turn the lights warm white. A Rainbow on these lights stops when a song changes them.',
+                ],
+              ),
+            ],
+          )
+        },
+      }),
+    ],
+  )
+
+// SCREEN COLORS
+
+const SCREEN_COLORS_NAME = 'Screen colors'
+
+const screenColorsSwitchView = (
+  model: Model,
+  snapshot: ScreenSnapshot,
+  id: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  switch_<Message>(
+    {
+      id,
+      label: SCREEN_COLORS_NAME,
+      isChecked: snapshot.config.isEnabled,
+      isDisabled: model.isSavingScreenColors,
+      onToggle: () =>
+        Message.ChangedScreenConfig({
+          config: {
+            ...snapshot.config,
+            isEnabled: !snapshot.config.isEnabled,
+          },
+        }),
+      className: 'data-[size=default]:h-7 data-[size=default]:w-12',
+      thumbClass:
+        'bg-white shadow-sm dark:data-checked:bg-white dark:data-unchecked:bg-foreground group-data-[size=default]/switch:size-6 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-3px)] group-data-[size=default]/switch:data-unchecked:translate-x-px',
+      labelClass: 'sr-only',
+      wrapperClass: 'gap-0',
+    },
+    h,
+  )
+
+const screenColorsConnectionLabel = (snapshot: ScreenSnapshot): string =>
+  Match.value(snapshot.connection).pipe(
+    Match.when('Off', () => 'Not listening to Joshflix'),
+    Match.when('Connected', () => 'Listening to Joshflix'),
+    Match.when('Connecting', () => 'Connecting to Joshflix…'),
+    Match.when('Unreachable', () => "Can't reach Joshflix"),
+    Match.exhaustive,
+  )
+
+const screenColorsRowStatus = (snapshot: ScreenSnapshot): RowStatus => {
+  const muted = 'text-muted-foreground'
+  if (!snapshot.config.isEnabled) {
+    return { text: 'Off', toneClass: muted }
+  }
+  if (snapshot.connection === 'Unreachable') {
+    return {
+      text: screenColorsConnectionLabel(snapshot),
+      toneClass: 'text-amber-300',
+    }
+  }
+  return Option.match(snapshot.maybeLastApplied, {
+    onNone: () => ({
+      text: `${snapshot.config.group} follows the TV picture`,
+      toneClass: muted,
+    }),
+    onSome: applied => ({
+      text: `${applied.title} · ${elapsed(snapshot.generatedAt, applied.at)}`,
+      toneClass: muted,
+    }),
+  })
+}
+
+const screenColorsRowView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  ScreenRemote.match(model.screenColors, {
+    Loading: () =>
+      h.p(
+        [h.Class(cn(CAPTION, 'px-4 py-3'))],
+        [`${SCREEN_COLORS_NAME}: loading…`],
+      ),
+    Unavailable: ({ reason }) =>
+      h.p(
+        [h.Class(cn(CAPTION, 'px-4 py-3'))],
+        [`${SCREEN_COLORS_NAME} is unavailable: ${reason}.`],
+      ),
+    Loaded: ({ snapshot }) => {
+      const status = screenColorsRowStatus(snapshot)
+      const color = Option.match(snapshot.maybeLastApplied, {
+        onNone: () => MUSIC_IDLE_HEX,
+        onSome: ({ color }) => color,
+      })
+      return h.div(
+        [h.Class('relative flex items-center gap-3 pr-4 hover:bg-muted/40')],
+        [
+          h.button(
+            [
+              h.Type('button'),
+              h.AriaLabel(`Open ${SCREEN_COLORS_NAME}`),
+              h.OnClick(
+                Message.SelectedScreen({ screen: Screen.ScreenColors() }),
+              ),
+              h.Class(
+                'flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left after:absolute after:inset-0',
+              ),
+            ],
+            [
+              h.span(
+                [
+                  h.Class(
+                    cn(
+                      'flex w-7 shrink-0 justify-center',
+                      !snapshot.config.isEnabled && 'opacity-40',
+                    ),
+                  ),
+                ],
+                [colorDotView(color, 'size-5', false, h)],
+              ),
+              h.span(
+                [h.Class('flex min-w-0 flex-col gap-0.5')],
+                [
+                  h.span(
+                    [h.Class('text-sm font-medium')],
+                    [SCREEN_COLORS_NAME],
+                  ),
+                  h.span(
+                    [h.Class(cn('break-words text-xs', status.toneClass))],
+                    [status.text],
+                  ),
+                ],
+              ),
+            ],
+          ),
+          screenColorsSwitchView(model, snapshot, 'screen-list-enabled', h),
+          icon(h, ChevronRight, 'size-4 shrink-0 text-muted-foreground'),
+        ],
+      )
+    },
+  })
+
+const screenShowLine = (snapshot: ScreenSnapshot): string =>
+  Option.match(snapshot.maybeShow, {
+    onNone: () => 'Nothing',
+    onSome: show => `${show.title}${show.isPlaying ? '' : ' (paused)'}`,
+  })
+
+const screenColorsScreen = (
+  model: Model,
+  groupNames: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class(SCREEN)],
+    [
+      backButtonView(h),
+      ScreenRemote.match(model.screenColors, {
+        Loading: () => h.p([h.Class(CAPTION)], ['Loading…']),
+        Unavailable: ({ reason }) =>
+          h.p(
+            [h.Class('text-sm text-destructive'), h.Role('alert')],
+            [`${SCREEN_COLORS_NAME} is unavailable: ${reason}.`],
+          ),
+        Loaded: ({ snapshot }) => {
+          const { config } = snapshot
+          const choices = Array.contains(groupNames, config.group)
+            ? groupNames
+            : [config.group, ...groupNames]
+          return h.div(
+            [h.Class('flex flex-col gap-3')],
+            [
+              h.div(
+                [h.Class('flex items-center justify-between gap-3')],
+                [
+                  h.h2([h.Class(SCREEN_TITLE)], [SCREEN_COLORS_NAME]),
+                  screenColorsSwitchView(
+                    model,
+                    snapshot,
+                    'screen-detail-enabled',
+                    h,
+                  ),
+                ],
+              ),
+              h.p(
+                [h.Class('text-sm text-muted-foreground')],
+                [
+                  "While a film or show plays in Joshflix on the TV, the lights that are on take the color on screen. A new color waits until the picture has held it for a moment, so cuts and flashes don't flicker the lights. Lights that are off stay off, and brightness stays where it is.",
+                ],
+              ),
+              h.div(
+                [h.Class(cn(CARD, 'flex flex-col gap-3'))],
+                [
+                  factLineView(
+                    screenColorsConnectionLabel(snapshot),
+                    screenShowLine(snapshot),
+                    Option.flatMap(
+                      snapshot.maybeShow,
+                      ({ maybeColor }) => maybeColor,
+                    ),
+                    h,
+                  ),
+                  Option.match(snapshot.maybeLastApplied, {
+                    onNone: () => h.empty,
+                    onSome: applied =>
+                      factLineView(
+                        `Lights changed ${elapsed(snapshot.generatedAt, applied.at)}`,
+                        `${applied.title} on ${applied.lights} ${applied.lights === 1 ? 'light' : 'lights'}`,
+                        Option.some(applied.color),
+                        h,
+                      ),
+                  }),
+                  Option.match(snapshot.maybeLastSkip, {
+                    onNone: () => h.empty,
+                    onSome: reason =>
+                      h.p([h.Class(CAPTION)], [`Left alone: ${reason}`]),
+                  }),
+                ],
+              ),
+              h.div(
+                [h.Class(cn(CARD, 'flex flex-col gap-4'))],
+                [
+                  fieldShell(
+                    'Lights',
+                    Option.none(),
+                    h.select(
+                      [
+                        h.Value(config.group),
+                        h.Disabled(model.isSavingScreenColors),
+                        h.OnChange(group =>
+                          Message.ChangedScreenConfig({
+                            config: { ...config, group },
+                          }),
+                        ),
+                        h.Class(INPUT),
+                      ],
+                      Array.map(choices, name =>
+                        h.option(
+                          [h.Value(name), h.Selected(name === config.group)],
+                          [name],
+                        ),
+                      ),
+                    ),
+                    h,
+                  ),
+                ],
+              ),
+              h.p(
+                [h.Class(CAPTION)],
+                [
+                  'Dark and grey scenes, pauses, and the end of a film leave the lights as they are. A Rainbow on these lights stops when a scene changes them. Joshflix reads its picture only while this is on.',
                 ],
               ),
             ],

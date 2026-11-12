@@ -65,7 +65,7 @@ The Devices page pairs bulbs, renames and removes them, moves them between group
 - Each change is a plan of requests, sent one at a time. The next one goes out only when `bridge/response/*` reports the previous one succeeded. Requests carry a `transaction` tagged per app instance, so a second open app can't confirm them.
 - A device whose friendly name is still its address is waiting for setup. That comes from `bridge/devices`, so it survives a reload. The pairing window comes from the retained `bridge/info`.
 - Groups nest only through shared bulbs, so moving a bulb also updates the groups around its old and new room. `moveLightChange` and its neighbors in `src/domain.ts` hold those rules. Adding to an empty group changes only that group, because it has no place in the tree yet.
-- Renaming a group also updates the PR flash and Music colors if they pointed at that group.
+- Renaming a group also updates the PR flash, Music colors, and Screen colors if they pointed at that group.
 
 ### Automations service
 
@@ -100,6 +100,16 @@ While a song plays, the bulbs in one group take the color of its album cover. Th
 - Only on the TV (on by default) ignores music playing on a phone. A song skipped for that reason is applied when playback moves to the TV.
 - It stops an overlapping Rainbow the way the flash does: a group command in x and y, twice. It runs under the flash's lock, so neither one restores colors over the other.
 - Which bulbs take color or color temperature comes from `bridge/devices`, read the same way as the app's `toLight`.
+
+#### Screen colors
+
+While a film or show plays in Joshflix on the TV, the bulbs in one group take the color on screen. About once a second the TV sends a 48×27 copy of its picture to the Joshflix relay (`~/.t3/projects/joshflix`, `joshflix-relay.service`), which finds the one color it reads as and sends it over a read-only WebSocket, `ws://127.0.0.1:8788/api/v1/screen/feed` (override with `SCREEN_FEED_URL`). Frames look like `{"_tag":"ScreenColors","playing":true,"title":"Dune","color":"#c8742f"}`. `service/screen.ts` listens there and reconnects every 5 seconds when it can't.
+
+- Off by default. Settings save as soon as they change, to `~/.config/pr-merge-lights/screen.json`, and are served at `/automations/screen`.
+- The service connects to the feed only while Screen colors is on. The TV reads its picture only while someone listens, so turning it off also stops the TV's work.
+- The relay smooths the color: a new one goes out only after the picture's color has clearly changed and held for 1.5 seconds, and at most every 2 seconds. The service then waits 400 ms more before it sends commands. Each color is applied once; after a pause or stop, the next color is applied again.
+- Commands are Music colors' (`applyColor` in `service/music.ts`): only bulbs that are on change, all to the same color, as x and y with no `transition`, brightness untouched, Rainbow stopped the same way, under the same lock.
+- A dark or grey picture (`color: null`), a pause, the end of a film, or the TV going quiet leaves the lights as they are. It never switches to warm white.
 
 Deploy with `scripts/deploy-automations.sh`. The Python watcher it replaced was deleted on 2026-11-08. The 9 PM all-off timer still runs `~/pr-merge-lights/lights_off.py`, so keep that folder.
 

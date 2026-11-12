@@ -32,6 +32,12 @@ import {
   MusicSnapshot,
   MusicSnapshotValue,
 } from './music'
+import {
+  SCREEN_API_PATH,
+  ScreenConfig,
+  ScreenSnapshot,
+  ScreenSnapshotValue,
+} from './screen'
 
 // MODEL
 
@@ -48,6 +54,13 @@ export const MusicRemote = defineTaggedUnion({
   Loaded: { snapshot: MusicSnapshotValue },
 })
 export type MusicRemote = typeof MusicRemote.Type
+
+export const ScreenRemote = defineTaggedUnion({
+  Loading: {},
+  Unavailable: { reason: Schema.String },
+  Loaded: { snapshot: ScreenSnapshotValue },
+})
+export type ScreenRemote = typeof ScreenRemote.Type
 
 export const SaveState = defineTaggedUnion({
   Idle: {},
@@ -86,6 +99,7 @@ export const Screen = defineTaggedUnion({
   PrMerged: { maybeOpenSection: Schema.Option(PrMergedSection) },
   Connections: { maybeOpenSection: Schema.Option(ConnectionSection) },
   Music: {},
+  ScreenColors: {},
 })
 export type Screen = typeof Screen.Type
 
@@ -114,6 +128,8 @@ export const Model = Schema.Struct({
   maybeUnreachableReason: Schema.Option(Schema.String),
   music: MusicRemote,
   isSavingMusic: Schema.Boolean,
+  screenColors: ScreenRemote,
+  isSavingScreenColors: Schema.Boolean,
 })
 export type Model = typeof Model.Type
 
@@ -130,6 +146,8 @@ export const init: Model = {
   maybeUnreachableReason: Option.none(),
   music: MusicRemote.Loading(),
   isSavingMusic: false,
+  screenColors: ScreenRemote.Loading(),
+  isSavingScreenColors: false,
 }
 
 // MESSAGE
@@ -158,6 +176,11 @@ export const Message = defineMessageUnion({
   ChangedMusicConfig: { config: MusicConfig },
   SucceededSaveMusic: { snapshot: MusicSnapshotValue },
   FailedSaveMusic: { error: Schema.String },
+  SucceededFetchScreenColors: { snapshot: ScreenSnapshotValue },
+  FailedFetchScreenColors: { error: Schema.String },
+  ChangedScreenConfig: { config: ScreenConfig },
+  SucceededSaveScreenColors: { snapshot: ScreenSnapshotValue },
+  FailedSaveScreenColors: { error: Schema.String },
 })
 export type Message = typeof Message.Type
 
@@ -179,6 +202,14 @@ const requestMusic = (
   init: RequestInit,
 ): Effect.Effect<typeof MusicSnapshotValue.Type, string> =>
   requestDecoded(`${MUSIC_API_PATH}${path}`, init, decodeMusicSnapshot)
+
+const decodeScreenSnapshot = Schema.decodeUnknownEffect(ScreenSnapshot)
+
+const requestScreen = (
+  path: string,
+  init: RequestInit,
+): Effect.Effect<typeof ScreenSnapshotValue.Type, string> =>
+  requestDecoded(`${SCREEN_API_PATH}${path}`, init, decodeScreenSnapshot)
 
 const requestDecoded = <A, E>(
   url: string,
@@ -303,6 +334,66 @@ export const FollowMusicGroupRename = Command.define('FollowMusicGroupRename', {
     ),
 })
 
+export const FetchScreenColors = Command.define('FetchScreenColors', {
+  messages: [
+    Message.SucceededFetchScreenColors,
+    Message.FailedFetchScreenColors,
+  ],
+  execute: requestScreen('', {}).pipe(
+    Effect.map(snapshot => Message.SucceededFetchScreenColors({ snapshot })),
+    Effect.catch(error =>
+      Effect.succeed(Message.FailedFetchScreenColors({ error })),
+    ),
+  ),
+})
+
+const putScreenConfig = (config: ScreenConfig) =>
+  requestScreen('/config', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+
+export const SaveScreenColors = Command.define('SaveScreenColors', {
+  args: { config: ScreenConfig },
+  messages: [Message.SucceededSaveScreenColors, Message.FailedSaveScreenColors],
+  execute: ({ config }) =>
+    putScreenConfig(config).pipe(
+      Effect.map(snapshot => Message.SucceededSaveScreenColors({ snapshot })),
+      Effect.catch(error =>
+        Effect.succeed(Message.FailedSaveScreenColors({ error })),
+      ),
+    ),
+})
+
+// NOTE: Screen colors also stores its group by name.
+export const FollowScreenGroupRename = Command.define(
+  'FollowScreenGroupRename',
+  {
+    args: { from: Schema.String, to: Schema.String },
+    messages: [
+      Message.SucceededSaveScreenColors,
+      Message.FailedSaveScreenColors,
+    ],
+    execute: ({ from, to }) =>
+      requestScreen('', {}).pipe(
+        Effect.flatMap(snapshot =>
+          snapshot.config.group === from
+            ? putScreenConfig({ ...snapshot.config, group: to })
+            : Effect.succeed(snapshot),
+        ),
+        Effect.map(snapshot => Message.SucceededSaveScreenColors({ snapshot })),
+        Effect.catch(error =>
+          Effect.succeed(
+            Message.FailedSaveScreenColors({
+              error: `couldn't point screen colors at the renamed group: ${error}`,
+            }),
+          ),
+        ),
+      ),
+  },
+)
+
 const withFlashGroup = (config: PrMergeConfig, group: string): PrMergeConfig =>
   modifyFields(config, {
     flash: flash => modifyFields(flash, { group: () => group }),
@@ -370,6 +461,7 @@ export const renamedGroup = (
   commands: [
     FollowGroupRename({ from, to }),
     FollowMusicGroupRename({ from, to }),
+    FollowScreenGroupRename({ from, to }),
   ],
 })
 
@@ -480,9 +572,11 @@ export const update = (model: Model, message: Message) =>
 
     TickedRefresh: () => ({
       model,
-      commands: model.isSavingMusic
-        ? [FetchSnapshot()]
-        : [FetchSnapshot(), FetchMusic()],
+      commands: [
+        FetchSnapshot(),
+        ...(model.isSavingMusic ? [] : [FetchMusic()]),
+        ...(model.isSavingScreenColors ? [] : [FetchScreenColors()]),
+      ],
     }),
 
     SucceededFetchSnapshot: ({ snapshot }) => ({
@@ -628,6 +722,61 @@ export const update = (model: Model, message: Message) =>
           Option.some(`Music colors weren't saved: ${error}.`),
       }),
       commands: [FetchMusic()],
+    }),
+
+    SucceededFetchScreenColors: ({ snapshot }) =>
+      model.isSavingScreenColors
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              screenColors: () => ScreenRemote.Loaded({ snapshot }),
+            }),
+          },
+
+    FailedFetchScreenColors: ({ error }) => ({
+      model: ScreenRemote.match(model.screenColors, {
+        Loaded: () => model,
+        Loading: () =>
+          modifyFields(model, {
+            screenColors: () => ScreenRemote.Unavailable({ reason: error }),
+          }),
+        Unavailable: () =>
+          modifyFields(model, {
+            screenColors: () => ScreenRemote.Unavailable({ reason: error }),
+          }),
+      }),
+    }),
+
+    // NOTE: Screen colors settings save as soon as they change, like music's.
+    ChangedScreenConfig: ({ config }) =>
+      ScreenRemote.match(model.screenColors, {
+        Loading: () => ({ model }),
+        Unavailable: () => ({ model }),
+        Loaded: ({ snapshot }) => ({
+          model: modifyFields(model, {
+            screenColors: () =>
+              ScreenRemote.Loaded({ snapshot: { ...snapshot, config } }),
+            isSavingScreenColors: () => true,
+            maybeProblem: () => Option.none(),
+          }),
+          commands: [SaveScreenColors({ config })],
+        }),
+      }),
+
+    SucceededSaveScreenColors: ({ snapshot }) => ({
+      model: modifyFields(model, {
+        screenColors: () => ScreenRemote.Loaded({ snapshot }),
+        isSavingScreenColors: () => false,
+      }),
+    }),
+
+    FailedSaveScreenColors: ({ error }) => ({
+      model: modifyFields(model, {
+        isSavingScreenColors: () => false,
+        maybeProblem: () =>
+          Option.some(`Screen colors weren't saved: ${error}.`),
+      }),
+      commands: [FetchScreenColors()],
     }),
 
     FailedFollowGroupRename: ({ error }) => ({

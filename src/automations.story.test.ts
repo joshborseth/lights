@@ -11,6 +11,7 @@ import {
 import {
   Action,
   FetchMusic,
+  FetchScreenColors,
   FetchSnapshot,
   Message,
   type Model,
@@ -19,12 +20,15 @@ import {
   RunAction,
   SaveDraft,
   SaveMusic,
+  SaveScreenColors,
   SaveState,
   Screen,
+  ScreenRemote,
   init,
   update,
 } from './automations'
 import { DEFAULT_MUSIC_CONFIG, type MusicSnapshot } from './music'
+import { DEFAULT_SCREEN_CONFIG, type ScreenSnapshot } from './screen'
 
 const snapshot: Snapshot = {
   generatedAt: 10_000,
@@ -68,6 +72,20 @@ const musicLoaded: Model = {
   music: MusicRemote.Loaded({ snapshot: music }),
 }
 
+const screenColors: ScreenSnapshot = {
+  generatedAt: 10_000,
+  config: DEFAULT_SCREEN_CONFIG,
+  connection: 'Off',
+  maybeShow: Option.none(),
+  maybeLastApplied: Option.none(),
+  maybeLastSkip: Option.none(),
+}
+
+const screenLoaded: Model = {
+  ...loaded,
+  screenColors: ScreenRemote.Loaded({ snapshot: screenColors }),
+}
+
 const editedDraft: PrMergeConfig = {
   ...DEFAULT_CONFIG,
   flash: { ...DEFAULT_CONFIG.flash, count: 2 },
@@ -88,9 +106,14 @@ describe('Automations update', () => {
         FetchMusic,
         Message.SucceededFetchMusic({ snapshot: music }),
       ),
+      Command.resolve(
+        FetchScreenColors,
+        Message.SucceededFetchScreenColors({ snapshot: screenColors }),
+      ),
       model(current => {
         expect(current.remote._tag).toBe('Loaded')
         expect(current.music._tag).toBe('Loaded')
+        expect(current.screenColors._tag).toBe('Loaded')
       }),
     )
   })
@@ -389,6 +412,10 @@ describe('Music colors update', () => {
         FetchSnapshot,
         Message.SucceededFetchSnapshot({ snapshot }),
       ),
+      Command.resolve(
+        FetchScreenColors,
+        Message.SucceededFetchScreenColors({ snapshot: screenColors }),
+      ),
       message(Message.SucceededFetchMusic({ snapshot: music })),
       model(current => {
         expect(current.isSavingMusic).toBe(true)
@@ -429,6 +456,103 @@ describe('Music colors update', () => {
       model(current => {
         expect(current.music).toEqual(
           MusicRemote.Unavailable({ reason: 'Not found.' }),
+        )
+      }),
+    )
+  })
+})
+
+describe('Screen colors update', () => {
+  const enabled = { ...DEFAULT_SCREEN_CONFIG, isEnabled: true }
+
+  test('a change shows at once and saves without the save bar', () => {
+    story(
+      update,
+      given(screenLoaded),
+      message(Message.ChangedScreenConfig({ config: enabled })),
+      model(current => {
+        expect(current.isSavingScreenColors).toBe(true)
+        expect(
+          ScreenRemote.match(current.screenColors, {
+            Loaded: ({ snapshot: loadedSnapshot }) =>
+              loadedSnapshot.config.isEnabled,
+            Loading: () => false,
+            Unavailable: () => false,
+          }),
+        ).toBe(true)
+      }),
+      Command.expectHas(SaveScreenColors),
+      Command.resolve(
+        SaveScreenColors,
+        Message.SucceededSaveScreenColors({
+          snapshot: {
+            ...screenColors,
+            config: enabled,
+            connection: 'Connecting',
+          },
+        }),
+      ),
+      model(current => {
+        expect(current.isSavingScreenColors).toBe(false)
+      }),
+    )
+  })
+
+  test('a refresh during a save fetches neither saving automation', () => {
+    story(
+      update,
+      given({
+        ...screenLoaded,
+        isSavingScreenColors: true,
+        isSavingMusic: true,
+      }),
+      message(Message.TickedRefresh()),
+      Command.resolve(
+        FetchSnapshot,
+        Message.SucceededFetchSnapshot({ snapshot }),
+      ),
+      message(Message.SucceededFetchScreenColors({ snapshot: screenColors })),
+      model(current => {
+        expect(current.isSavingScreenColors).toBe(true)
+      }),
+    )
+  })
+
+  test('a failed save says so and reloads the saved settings', () => {
+    story(
+      update,
+      given(screenLoaded),
+      message(Message.ChangedScreenConfig({ config: enabled })),
+      Command.resolve(
+        SaveScreenColors,
+        Message.FailedSaveScreenColors({ error: 'no answer' }),
+      ),
+      model(current => {
+        expect(current.isSavingScreenColors).toBe(false)
+        expect(current.maybeProblem).toEqual(
+          Option.some("Screen colors weren't saved: no answer."),
+        )
+      }),
+      Command.resolve(
+        FetchScreenColors,
+        Message.SucceededFetchScreenColors({ snapshot: screenColors }),
+      ),
+      model(current => {
+        expect(current.screenColors).toEqual(
+          ScreenRemote.Loaded({ snapshot: screenColors }),
+        )
+      }),
+    )
+  })
+
+  test('an older service without screen colors shows it as unavailable', () => {
+    story(
+      update,
+      given(loaded),
+      message(Message.FailedFetchScreenColors({ error: 'Not found.' })),
+      model(current => {
+        expect(current.screenColors).toEqual(
+          ScreenRemote.Unavailable({ reason: 'Not found.' }),
         )
       }),
     )

@@ -12,9 +12,15 @@ import {
   type MusicConfig,
   MusicSnapshot,
 } from '../src/music'
+import {
+  DEFAULT_SCREEN_CONFIG,
+  type ScreenConfig,
+  ScreenSnapshot,
+} from '../src/screen'
 import { type Engine } from './engine'
 import { makeHandler } from './http'
 import { type MusicSync } from './music'
+import { type ScreenSync } from './screen'
 
 const snapshot: Snapshot = {
   generatedAt: 1000,
@@ -69,13 +75,27 @@ const setup = () => {
     saveConfig: config => Effect.sync(() => saveMusic(config)),
     run: Effect.void,
   }
+  const saveScreen = vi.fn<(config: ScreenConfig) => void>()
+  const screen: ScreenSync = {
+    snapshot: Effect.succeed({
+      generatedAt: 1000,
+      config: DEFAULT_SCREEN_CONFIG,
+      connection: 'Off',
+      maybeShow: Option.none(),
+      maybeLastApplied: Option.none(),
+      maybeLastSkip: Option.none(),
+    }),
+    saveConfig: config => Effect.sync(() => saveScreen(config)),
+    run: Effect.void,
+  }
   const handle = makeHandler({
     engine,
     music,
+    screen,
     requestRestart,
     run: Effect.runPromise,
   })
-  return { handle, saveConfig, saveMusic, pause, requestRestart }
+  return { handle, saveConfig, saveMusic, saveScreen, pause, requestRestart }
 }
 
 const send = (
@@ -228,5 +248,43 @@ describe('automations API', () => {
       }),
     )
     expect(response.status).toBe(415)
+  })
+
+  test('serves a screen colors snapshot the app can decode', async () => {
+    const { handle } = setup()
+    const response = await handle(send('GET', '/automations/screen'))
+    expect(response.status).toBe(200)
+    const decoded = Schema.decodeUnknownOption(ScreenSnapshot)(
+      await response.json(),
+    )
+    expect(Option.isSome(decoded)).toBe(true)
+  })
+
+  test('saves screen colors settings with the group trimmed', async () => {
+    const { handle, saveScreen, saveMusic } = setup()
+    const response = await handle(
+      send('PUT', '/automations/screen/config', {
+        isEnabled: true,
+        group: ' Living Room  ',
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(saveScreen).toHaveBeenCalledWith({
+      isEnabled: true,
+      group: 'Living Room',
+    })
+    expect(saveMusic).not.toHaveBeenCalled()
+  })
+
+  test('refuses screen colors settings without a group', async () => {
+    const { handle, saveScreen } = setup()
+    const response = await handle(
+      send('PUT', '/automations/screen/config', {
+        ...DEFAULT_SCREEN_CONFIG,
+        group: '',
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(saveScreen).not.toHaveBeenCalled()
   })
 })

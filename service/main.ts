@@ -7,19 +7,24 @@ import { makeAccountHealth, makeEngine } from './engine'
 import { MissingTokenError, makeGitHub } from './github'
 import { makeHandler } from './http'
 import { type LightsError, connectLights } from './mqtt'
-import { connectMusicFeed, makeMusicSync } from './music'
+import { connectFeed, connectMusicFeed, makeMusicSync } from './music'
+import { makeScreenSync } from './screen'
 import {
   defaultPaths,
   loadInitial,
   makeStore,
   readMqttOptions,
   readMusicConfig,
+  readScreenConfig,
   saveMusicConfig,
+  saveScreenConfig,
 } from './store'
 
 const DEFAULT_PORT = 8093
 // NOTE: The music server on this machine (~/.t3/projects/music).
 const DEFAULT_MUSIC_FEED_URL = 'ws://127.0.0.1:4310/now-playing'
+// NOTE: The Joshflix relay on this machine (~/.t3/projects/joshflix).
+const DEFAULT_SCREEN_FEED_URL = 'ws://127.0.0.1:8788/api/v1/screen/feed'
 const TOKEN_TIMEOUT_MS = 20_000
 const RESTART_DELAY_MS = 200
 
@@ -103,6 +108,22 @@ const program = Effect.gen(function* () {
     yield* readMusicConfig(paths),
   )
 
+  const screen = yield* makeScreenSync(
+    {
+      lights,
+      withLightsLock: engine.withLightsLock,
+      saveConfig: saveScreenConfig(paths),
+      feed: connectFeed(
+        process.env['SCREEN_FEED_URL'] ?? DEFAULT_SCREEN_FEED_URL,
+        'Joshflix screen feed',
+        log,
+      ),
+      now: Clock.currentTimeMillis,
+      errorText: (error: LightsError) => error.reason,
+    },
+    yield* readScreenConfig(paths),
+  )
+
   const stopRequested = yield* Effect.callback<void>(resume => {
     const finish = () => resume(Effect.void)
     process.once('SIGTERM', finish)
@@ -121,6 +142,7 @@ const program = Effect.gen(function* () {
         },
       },
       music,
+      screen,
       requestRestart: () => {
         setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS)
       },
@@ -131,10 +153,12 @@ const program = Effect.gen(function* () {
 
   const watcher = yield* Effect.forkChild(engine.run)
   const musicWatcher = yield* Effect.forkChild(music.run)
+  const screenWatcher = yield* Effect.forkChild(screen.run)
   yield* Fiber.join(stopRequested)
   log('stopping')
   yield* Fiber.interrupt(watcher)
   yield* Fiber.interrupt(musicWatcher)
+  yield* Fiber.interrupt(screenWatcher)
   yield* engine.waitForFlashToFinish
   yield* lights.close
   yield* Effect.promise(() => server.stop())

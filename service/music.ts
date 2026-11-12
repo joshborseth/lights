@@ -140,7 +140,7 @@ export const decide = (
 
 // APPLY
 
-type ApplyResult =
+export type ApplyResult =
   | Readonly<{ _tag: 'Applied'; color: string; lights: number }>
   | Readonly<{ _tag: 'Skipped'; reason: string }>
 
@@ -149,18 +149,23 @@ const overlaps = (
   others: ReadonlyArray<string>,
 ): boolean => Array.some(members, member => Array.contains(others, member))
 
-export const applySong = <E>(
+/**
+ * Paints the lit bulbs in `group` one color, or warm white for none (see
+ * `musicCommands`), after stopping any Rainbow loop that overlaps them. Music
+ * colors and Screen colors both use it.
+ */
+export const applyColor = <E>(
   lights: MusicLightsPort<E>,
-  song: Pick<NowPlaying, 'color'>,
-  config: MusicConfig,
+  maybeColor: Option.Option<string>,
+  group: string,
 ): Effect.Effect<ApplyResult, E> =>
   Effect.gen(function* () {
-    const members = lights.groupMembers(config.group)
+    const members = lights.groupMembers(group)
     if (Array.isReadonlyArrayEmpty(members)) {
-      return { _tag: 'Skipped', reason: `${config.group} has no lights.` }
+      return { _tag: 'Skipped', reason: `${group} has no lights.` }
     }
-    const loopsToStop = Array.filter(lights.activeRainbowGroups(), group =>
-      overlaps(lights.groupMembers(group), members),
+    const loopsToStop = Array.filter(lights.activeRainbowGroups(), other =>
+      overlaps(lights.groupMembers(other), members),
     )
     // NOTE: Ask only for bulbs we have never heard from, and only `state`
     // (see readStates). While a Rainbow runs, listen instead, as the flash does.
@@ -181,26 +186,26 @@ export const applySong = <E>(
         capabilities: lights.capabilitiesOf(name),
       })),
     )
-    const commands = musicCommands(Option.fromNullOr(song.color), bulbs)
+    const commands = musicCommands(maybeColor, bulbs)
     const first = commands[0]
     if (first === undefined) {
       return {
         _tag: 'Skipped',
-        reason: `No lights in ${config.group} were on.`,
+        reason: `No lights in ${group} were on.`,
       }
     }
     // NOTE: A Rainbow loop is stopped with a group command in x and y, twice,
     // as the flash does. A per-light command alone would not stop it.
     yield* Effect.forEach(
       loopsToStop,
-      group =>
+      loop =>
         Effect.gen(function* () {
-          yield* lights.log(`stopping Rainbow on ${group} for music colors`)
+          yield* lights.log(`stopping Rainbow on ${loop} to paint ${group}`)
           const frame = { color: hexToXy(first.hex) }
-          yield* lights.publishGroup(group, frame)
+          yield* lights.publishGroup(loop, frame)
           yield* lights.sleep(STOP_LOOP_REPEAT_MS)
-          yield* lights.publishGroup(group, frame)
-          lights.markRainbowStopped(group)
+          yield* lights.publishGroup(loop, frame)
+          lights.markRainbowStopped(loop)
         }),
       { discard: true },
     )
@@ -215,6 +220,13 @@ export const applySong = <E>(
       lights: commands.length,
     }
   })
+
+export const applySong = <E>(
+  lights: MusicLightsPort<E>,
+  song: Pick<NowPlaying, 'color'>,
+  config: MusicConfig,
+): Effect.Effect<ApplyResult, E> =>
+  applyColor(lights, Option.fromNullOr(song.color), config.group)
 
 // SYNC
 
@@ -435,6 +447,70 @@ export type MusicFeed = Readonly<{
 }>
 
 /**
+ * A read-only WebSocket feed as a stream of events. It reconnects on its own,
+ * every few seconds, for as long as the stream runs, and closes when the
+ * stream ends. `name` is how the log calls it. `onOpen` and `onClose` see
+ * each socket as it opens and closes.
+ */
+export const connectFeed = (
+  url: string,
+  name: string,
+  log: (text: string) => void,
+  hooks: Readonly<{
+    onOpen?: (socket: WebSocket) => void
+    onClose?: (socket: WebSocket) => void
+  }> = {},
+): Stream.Stream<FeedEvent> =>
+  Stream.callback<FeedEvent>(queue =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        let isClosed = false
+        let maybeSocket: WebSocket | undefined
+        let maybeTimer: ReturnType<typeof setTimeout> | undefined
+        let wasConnected = true
+
+        const connect = (): void => {
+          const socket = new WebSocket(url)
+          maybeSocket = socket
+          socket.addEventListener('open', () => {
+            wasConnected = true
+            log(`connected to the ${name} at ${url}`)
+            hooks.onOpen?.(socket)
+            Queue.offerUnsafe(queue, { _tag: 'Connected' })
+          })
+          socket.addEventListener('message', event => {
+            Queue.offerUnsafe(queue, {
+              _tag: 'Frame',
+              text: String(event.data),
+            })
+          })
+          socket.addEventListener('close', () => {
+            hooks.onClose?.(socket)
+            // NOTE: Closed on purpose: the stream ended.
+            if (isClosed) {
+              return
+            }
+            if (wasConnected) {
+              log(`lost the ${name}; retrying`)
+            }
+            wasConnected = false
+            Queue.offerUnsafe(queue, { _tag: 'Disconnected' })
+            maybeTimer = setTimeout(connect, RECONNECT_MS)
+          })
+        }
+
+        connect()
+        return () => {
+          isClosed = true
+          clearTimeout(maybeTimer)
+          maybeSocket?.close()
+        }
+      }),
+      close => Effect.sync(close),
+    ),
+  )
+
+/**
  * The music server's `/now-playing` WebSocket. It reconnects on its own,
  * every few seconds, for as long as `events` runs, and says again whom the
  * bulbs follow each time it connects.
@@ -450,55 +526,17 @@ export const connectMusicFeed = (
     socket.send(encodeFollow({ _tag: 'Follow', kinds }))
   }
 
-  const events = Stream.callback<FeedEvent>(queue =>
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        let isClosed = false
-        let maybeSocket: WebSocket | undefined
-        let maybeTimer: ReturnType<typeof setTimeout> | undefined
-        let wasConnected = true
-
-        const connect = (): void => {
-          const socket = new WebSocket(url)
-          maybeSocket = socket
-          socket.addEventListener('open', () => {
-            wasConnected = true
-            maybeOpenSocket = socket
-            log(`connected to the music feed at ${url}`)
-            sendFollow(socket)
-            Queue.offerUnsafe(queue, { _tag: 'Connected' })
-          })
-          socket.addEventListener('message', event => {
-            Queue.offerUnsafe(queue, {
-              _tag: 'Frame',
-              text: String(event.data),
-            })
-          })
-          socket.addEventListener('close', () => {
-            if (wasConnected) {
-              log('lost the music feed; retrying')
-            }
-            wasConnected = false
-            if (maybeOpenSocket === socket) {
-              maybeOpenSocket = undefined
-            }
-            Queue.offerUnsafe(queue, { _tag: 'Disconnected' })
-            if (!isClosed) {
-              maybeTimer = setTimeout(connect, RECONNECT_MS)
-            }
-          })
-        }
-
-        connect()
-        return () => {
-          isClosed = true
-          clearTimeout(maybeTimer)
-          maybeSocket?.close()
-        }
-      }),
-      close => Effect.sync(close),
-    ),
-  )
+  const events = connectFeed(url, 'music feed', log, {
+    onOpen: socket => {
+      maybeOpenSocket = socket
+      sendFollow(socket)
+    },
+    onClose: socket => {
+      if (maybeOpenSocket === socket) {
+        maybeOpenSocket = undefined
+      }
+    },
+  })
 
   return {
     events,

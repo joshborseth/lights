@@ -26,6 +26,7 @@ import {
 } from './main'
 import * as Manage from './manage'
 import { DEFAULT_MUSIC_CONFIG, type MusicSnapshot } from './music'
+import { DEFAULT_SCREEN_CONFIG, type ScreenSnapshot } from './screen'
 import { view } from './view'
 
 const snapshot: Snapshot = {
@@ -650,6 +651,127 @@ describe('Music colors', () => {
       { update, view },
       given(withMusic({ ...music, connection: 'Unreachable' })),
       expect(text("Can't reach the music app")).toExist(),
+    )
+  })
+})
+
+const screenColors: ScreenSnapshot = {
+  generatedAt: 100_000,
+  config: { ...DEFAULT_SCREEN_CONFIG, isEnabled: true, group: 'Living Room' },
+  connection: 'Connected',
+  maybeShow: Option.some({
+    title: 'Dune: Part Two',
+    isPlaying: true,
+    maybeColor: Option.some('#c8742f'),
+  }),
+  maybeLastApplied: Option.some({
+    at: 70_000,
+    title: 'Dune: Part Two',
+    color: '#ff8a1f',
+    lights: 2,
+  }),
+  maybeLastSkip: Option.none(),
+}
+
+const withScreenColors = (
+  snapshotValue: ScreenSnapshot,
+  screen: Automations.Screen = Automations.Screen.List(),
+): Model => ({
+  ...loaded,
+  automations: {
+    ...loaded.automations,
+    screen,
+    screenColors: Automations.ScreenRemote.Loaded({ snapshot: snapshotValue }),
+  },
+})
+
+describe('Screen colors', () => {
+  test('lists the automation with the last show it followed', () => {
+    scene(
+      { update, view },
+      given(withScreenColors(screenColors)),
+      expect(role('button', { name: 'Open Screen colors' })).toExist(),
+      expect(text('Dune: Part Two · 30s ago')).toExist(),
+      expect(role('switch', { name: 'Screen colors' })).toBeChecked(),
+    )
+  })
+
+  test('says Off on the row when it is off', () => {
+    scene(
+      { update, view },
+      given(
+        withScreenColors({
+          ...screenColors,
+          config: { ...screenColors.config, isEnabled: false },
+          connection: 'Off',
+        }),
+      ),
+      expect(role('switch', { name: 'Screen colors' })).not.toBeChecked(),
+      expect(text('Off')).toExist(),
+    )
+  })
+
+  test('opens to what is playing, what changed, and its settings', () => {
+    scene(
+      { update, view },
+      given(withScreenColors(screenColors)),
+      click(role('button', { name: 'Open Screen colors' })),
+      expect(role('heading', { name: 'Screen colors' })).toExist(),
+      expect(text('Listening to Joshflix')).toExist(),
+      expect(text('Dune: Part Two')).toExist(),
+      expect(text('Lights changed 30s ago')).toExist(),
+      expect(text('Dune: Part Two on 2 lights')).toExist(),
+      expect(role('combobox')).toHaveValue('Living Room'),
+    )
+  })
+
+  test('turning it off saves at once', () => {
+    scene(
+      { update, view },
+      given(withScreenColors(screenColors, Automations.Screen.ScreenColors())),
+      click(role('switch', { name: 'Screen colors' })),
+      Command.expectHas(Automations.SaveScreenColors),
+      expect(role('switch', { name: 'Screen colors' })).toBeDisabled(),
+      Command.resolve(
+        Automations.SaveScreenColors,
+        Automations.Message.SucceededSaveScreenColors({
+          snapshot: {
+            ...screenColors,
+            config: { ...screenColors.config, isEnabled: false },
+            connection: 'Off',
+          },
+        }),
+      ),
+      expect(role('switch', { name: 'Screen colors' })).not.toBeChecked(),
+      expect(text('Not listening to Joshflix')).toExist(),
+    )
+  })
+
+  test('says when a film is paused', () => {
+    scene(
+      { update, view },
+      given(
+        withScreenColors(
+          {
+            ...screenColors,
+            maybeShow: Option.some({
+              title: 'Dune: Part Two',
+              isPlaying: false,
+              maybeColor: Option.none(),
+            }),
+          },
+          Automations.Screen.ScreenColors(),
+        ),
+      ),
+      expect(text('Dune: Part Two (paused)')).toExist(),
+    )
+  })
+
+  test('says when Joshflix cannot be reached', () => {
+    scene(
+      { update, view },
+      given(withScreenColors({ ...screenColors, connection: 'Unreachable' })),
+      expect(text("Can't reach Joshflix")).toExist(),
     )
   })
 })

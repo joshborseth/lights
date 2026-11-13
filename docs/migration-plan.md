@@ -65,7 +65,7 @@ The Devices page pairs bulbs, renames and removes them, moves them between group
 - Each change is a plan of requests, sent one at a time. The next one goes out only when `bridge/response/*` reports the previous one succeeded. Requests carry a `transaction` tagged per app instance, so a second open app can't confirm them.
 - A device whose friendly name is still its address is waiting for setup. That comes from `bridge/devices`, so it survives a reload. The pairing window comes from the retained `bridge/info`.
 - Groups nest only through shared bulbs, so moving a bulb also updates the groups around its old and new room. `moveLightChange` and its neighbors in `src/domain.ts` hold those rules. Adding to an empty group changes only that group, because it has no place in the tree yet.
-- Renaming a group also updates the PR flash, Music colors, and Screen colors if they pointed at that group.
+- Renaming a group also updates the PR flash and Screen colors if they pointed at that group.
 
 ### Automations service
 
@@ -88,31 +88,6 @@ Browser  --- /automations ---> lights-lan
 - Writes must be JSON, which makes browsers preflight them. The service answers no preflights, so other sites cannot send commands.
 - A merge older than the catch-up window is recorded but never flashes, so downtime or a newly added account cannot replay old merges.
 
-#### Music colors
-
-While a song plays, the bulbs in one group take the color of its album cover. The music server (`~/.t3/projects/music`, `music.service`) sends each song and the one color its cover reads as (the same color its full player is tinted with) over a WebSocket, `ws://127.0.0.1:4310/now-playing` (override with `MUSIC_FEED_URL`). `service/music.ts` listens there and reconnects every 5 seconds when it can't.
-
-- Off by default. Settings save as soon as they change, with no save bar, to `~/.config/pr-merge-lights/music.json`, and are served at `/automations/music`.
-- On the TV the bulbs change with the music. The service tells the music server whose songs it follows (`Follow`: `Tv`, `Tv` and `Web`, or nothing while off), on every connect and every settings change. While it follows the TV, the TV holds each song it jumps to until the song is loaded and its color known (at most 3 seconds), then starts it, and the frame carries a `cue` for that moment. A song that follows the last with no gap gets its `cue` about half a second ahead. A cue is painted at its moment, with no waiting, and a new cue or none cancels one still pending.
-- Anything without a cue (music on a phone, a music server built before cues) must stay current for 1.5 seconds before the bulbs follow it, so a run of skips doesn't flicker them. Each song is applied once; changing a setting applies it again to the song already playing.
-- Only bulbs that are on change, and they all take the same color. Brightness stays where it is. The color goes as x and y with no `transition`, pushed to at least 70% saturation because bulbs wash pale colors out to white.
-- A black, white, or grey cover (the music server sends `color: null`) sends `color_temp` 370 (warm white) to bulbs that take color temperature.
-- Only on the TV (on by default) ignores music playing on a phone. A song skipped for that reason is applied when playback moves to the TV.
-- It stops an overlapping Rainbow the way the flash does: a group command in x and y, twice. It runs under the flash's lock, so neither one restores colors over the other.
-- Which bulbs take color or color temperature comes from `bridge/devices`, read the same way as the app's `toLight`.
-
-##### Light show
-
-With Light show on (off by default), the lights also move with the song. The music server analyzes every song it plays for the TV's visuals (beats, bars, sections, drops) and serves it at `/tv/analysis?videoId=…`, next to the feed. Its `/now-playing` frames carry a `clock`: where the song is at a server time, re-sent only when the position jumps or drifts by more than 40 ms.
-
-- `src/musicShow.ts` plans each song once, for the lights that are on when it starts, in name order. The color stays the cover's; only brightness moves. Quiet sections sit at 30% with one light lifted each bar, middle sections sit at half with one light chasing round at full on the beat, and the loudest sections (ranked within the song, since section energy is relative to the song's own loudest moment) pump every light to full on the bar and back to 60% halfway. The four bars before a drop dim step by step to 12% while the chase keeps going, and every light hits full when the drop lands.
-- Limits: one bulb gets at most one command per 400 ms, and all bulbs together at most 12 a second, plus one burst of one per bulb on a section's first bar or a drop. A level that has to wait goes out at the next beat with room. On 12 real songs the plan averaged 3 to 7.5 commands a second.
-- `service/musicShow.ts` plays the plan on the song clock. Joining a song part way through sets each light to where the plan has it by then; a light the plan hasn't reached yet keeps its brightness. A frame whose clock belongs to another song than its track (mid song change) is ignored rather than stopping the show. It sends each command 60 ms (Zigbee) before the beat is heard, which is 120 ms (the TV's audio output) after the clock's position, plus the Timing setting (300 ms either way, in 50 ms steps).
-- Commands are `{"brightness": n}` only, with no `transition`, and go only to bulbs that are on at that moment, so a bulb turned off mid-song stays off.
-- Each bulb's brightness from before the show is kept and put back when the show stops: on pause, when nothing plays, when music moves to a phone with Only on the TV, when the feed drops, or when the show or Music colors is turned off. A skip pauses for a moment while the TV holds the next song, so the show reuses the kept brightness for 10 seconds after putting it back rather than reading the bulbs again.
-- Show commands never wait for the lights lock: a beat that comes while the PR flash runs is skipped. While a Rainbow runs on these lights the show waits, and when it stops it leaves the Rainbow running instead of putting brightness back, since any command to a bulb would end it. A failed restore is tried again at the next stop.
-- A song with no analysis (the music server is still downloading it, or could not analyze it) gets colors only; the service asks again every minute while it plays. A request the music server is still working on survives a new clock.
-
 #### Screen colors
 
 While a film or show plays in Joshflix on the TV, the bulbs in one group take the color on screen. About once a second the TV sends a 48×27 copy of its picture to the Joshflix relay (`~/.t3/projects/joshflix`, `joshflix-relay.service`), which finds the one color it reads as and sends it over a read-only WebSocket, `ws://127.0.0.1:8788/api/v1/screen/feed` (override with `SCREEN_FEED_URL`). Frames look like `{"_tag":"ScreenColors","playing":true,"title":"Dune","color":"#c8742f"}`. `service/screen.ts` listens there and reconnects every 5 seconds when it can't.
@@ -120,7 +95,8 @@ While a film or show plays in Joshflix on the TV, the bulbs in one group take th
 - Off by default. Settings save as soon as they change, to `~/.config/pr-merge-lights/screen.json`, and are served at `/automations/screen`.
 - The service connects to the feed only while Screen colors is on. The TV reads its picture only while someone listens, so turning it off also stops the TV's work.
 - The relay smooths the color: a new one goes out only after the picture's color has clearly changed and held for 1.5 seconds, and at most every 2 seconds. The service then waits 400 ms more before it sends commands. Each color is applied once; after a pause or stop, the next color is applied again.
-- Commands are Music colors' (`applyColor` in `service/music.ts`): only bulbs that are on change, all to the same color, as x and y with no `transition`, brightness untouched, Rainbow stopped the same way, under the same lock.
+- Commands come from `applyColor` in `service/paint.ts`: only bulbs that are on change, all to the same color, as x and y with no `transition`, pushed to at least 70% saturation because bulbs wash pale colors out to white. Brightness stays where it is. It stops an overlapping Rainbow the way the flash does (a group command in x and y, twice) and runs under the flash's lock, so neither one restores colors over the other. Which bulbs take color comes from `bridge/devices`, read the same way as the app's `toLight`.
+- Music colors and its Light show (album cover colors and beat-timed brightness from the music app) were removed on 2026-11-13: it was too much. The music app dropped its `/now-playing` feed at the same time.
 - A dark or grey picture (`color: null`), a pause, the end of a film, or the TV going quiet leaves the lights as they are. It never switches to warm white.
 
 Deploy with `scripts/deploy-automations.sh`. The Python watcher it replaced was deleted on 2026-11-08. The 9 PM all-off timer still runs `~/pr-merge-lights/lights_off.py`, so keep that folder.

@@ -7,27 +7,18 @@ import { makeAccountHealth, makeEngine } from './engine'
 import { MissingTokenError, makeGitHub } from './github'
 import { makeHandler } from './http'
 import { type LightsError, connectLights } from './mqtt'
-import {
-  connectFeed,
-  connectMusicFeed,
-  makeAnalysisFetcher,
-  makeMusicSync,
-} from './music'
+import { connectFeed } from './paint'
 import { makeScreenSync } from './screen'
 import {
   defaultPaths,
   loadInitial,
   makeStore,
   readMqttOptions,
-  readMusicConfig,
   readScreenConfig,
-  saveMusicConfig,
   saveScreenConfig,
 } from './store'
 
 const DEFAULT_PORT = 8093
-// NOTE: The music server on this machine (~/.t3/projects/music).
-const DEFAULT_MUSIC_FEED_URL = 'ws://127.0.0.1:4310/now-playing'
 // NOTE: The Joshflix relay on this machine (~/.t3/projects/joshflix).
 const DEFAULT_SCREEN_FEED_URL = 'ws://127.0.0.1:8788/api/v1/screen/feed'
 const TOKEN_TIMEOUT_MS = 20_000
@@ -96,23 +87,6 @@ const program = Effect.gen(function* () {
     health,
   )
 
-  const musicFeedUrl = process.env['MUSIC_FEED_URL'] ?? DEFAULT_MUSIC_FEED_URL
-  const musicFeed = connectMusicFeed(musicFeedUrl, log)
-  const music = yield* makeMusicSync(
-    {
-      lights,
-      withLightsLock: engine.withLightsLock,
-      tryLightsLock: engine.tryLightsLock,
-      fetchAnalysis: makeAnalysisFetcher(musicFeedUrl, log),
-      saveConfig: saveMusicConfig(paths),
-      feed: musicFeed.events,
-      follow: musicFeed.follow,
-      now: Clock.currentTimeMillis,
-      errorText: (error: LightsError) => error.reason,
-    },
-    yield* readMusicConfig(paths),
-  )
-
   const screen = yield* makeScreenSync(
     {
       lights,
@@ -146,7 +120,6 @@ const program = Effect.gen(function* () {
           return engine.saveConfig(config)
         },
       },
-      music,
       screen,
       requestRestart: () => {
         setTimeout(() => process.kill(process.pid, 'SIGTERM'), RESTART_DELAY_MS)
@@ -157,12 +130,10 @@ const program = Effect.gen(function* () {
   log(`automations service listening on 127.0.0.1:${server.port}`)
 
   const watcher = yield* Effect.forkChild(engine.run)
-  const musicWatcher = yield* Effect.forkChild(music.run)
   const screenWatcher = yield* Effect.forkChild(screen.run)
   yield* Fiber.join(stopRequested)
   log('stopping')
   yield* Fiber.interrupt(watcher)
-  yield* Fiber.interrupt(musicWatcher)
   yield* Fiber.interrupt(screenWatcher)
   yield* engine.waitForFlashToFinish
   yield* lights.close

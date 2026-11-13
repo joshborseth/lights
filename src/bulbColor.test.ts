@@ -1,19 +1,12 @@
-import { Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 
 import { hexToXy } from './automation'
-import {
-  type MusicBulb,
-  WARM_WHITE_COLOR_TEMP,
-  bulbHex,
-  musicCommands,
-} from './music'
+import { type ColorBulb, bulbHex, colorCommands } from './bulbColor'
 
 const COLOR = { supportsColor: true, supportsColorTemp: true }
 const WHITE = { supportsColor: false, supportsColorTemp: true }
-const PLAIN = { supportsColor: false, supportsColorTemp: false }
 
-const bulb = (name: string, isOn = true, capabilities = COLOR): MusicBulb => ({
+const bulb = (name: string, isOn = true, capabilities = COLOR): ColorBulb => ({
   name,
   isOn,
   capabilities,
@@ -25,7 +18,7 @@ describe('bulbHex', () => {
   })
 
   test('pushes a pale color to a strong one with the same hue', () => {
-    // IGOR's pale pink would look nearly white on a bulb.
+    // NOTE: A pale pink would look nearly white on a bulb.
     expect(bulbHex('#efafc3')).toBe('#ff4d84')
   })
 
@@ -35,11 +28,11 @@ describe('bulbHex', () => {
   })
 })
 
-describe('musicCommands', () => {
-  const color = Option.some('#1281b6')
+describe('colorCommands', () => {
+  const color = '#1281b6'
 
-  test('gives every lit bulb the cover color, in name order', () => {
-    const commands = musicCommands(color, [
+  test('gives every lit bulb the color, in name order', () => {
+    const commands = colorCommands(color, [
       bulb('D'),
       bulb('B'),
       bulb('A'),
@@ -47,35 +40,21 @@ describe('musicCommands', () => {
     ])
     expect(commands.map(({ name }) => name)).toEqual(['A', 'B', 'C', 'D'])
     expect(new Set(commands.map(({ hex }) => hex))).toEqual(
-      new Set([bulbHex('#1281b6')]),
+      new Set([bulbHex(color)]),
     )
   })
 
   test('sends only x and y: no hex, hue, or transition', () => {
-    const [command] = musicCommands(color, [bulb('A')])
-    expect(command?.payload).toEqual({
-      color: hexToXy(bulbHex('#1281b6')),
-    })
+    const [command] = colorCommands(color, [bulb('A')])
+    expect(command?.payload).toEqual({ color: hexToXy(bulbHex(color)) })
   })
 
   test('leaves bulbs that are off, and bulbs with no color, alone', () => {
-    const commands = musicCommands(color, [
+    const commands = colorCommands(color, [
       bulb('Off', false),
       bulb('White', true, WHITE),
       bulb('On'),
     ])
     expect(commands.map(({ name }) => name)).toEqual(['On'])
-  })
-
-  test('turns lit bulbs warm white for a cover with no color', () => {
-    const commands = musicCommands(Option.none(), [
-      bulb('Color'),
-      bulb('White', true, WHITE),
-      bulb('Plain', true, PLAIN),
-    ])
-    expect(commands.map(({ name, payload }) => [name, payload])).toEqual([
-      ['Color', { color_temp: WARM_WHITE_COLOR_TEMP }],
-      ['White', { color_temp: WARM_WHITE_COLOR_TEMP }],
-    ])
   })
 })

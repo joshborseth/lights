@@ -10,16 +10,13 @@ import {
 } from './automation'
 import {
   Action,
-  FetchMusic,
   FetchScreenColors,
   FetchSnapshot,
   Message,
   type Model,
-  MusicRemote,
   Remote,
   RunAction,
   SaveDraft,
-  SaveMusic,
   SaveScreenColors,
   SaveState,
   Screen,
@@ -27,7 +24,6 @@ import {
   init,
   update,
 } from './automations'
-import { DEFAULT_MUSIC_CONFIG, type MusicSnapshot } from './music'
 import { DEFAULT_SCREEN_CONFIG, type ScreenSnapshot } from './screen'
 
 const snapshot: Snapshot = {
@@ -56,21 +52,6 @@ const snapshot: Snapshot = {
 const loaded: Model = {
   ...init,
   remote: Remote.Loaded({ snapshot }),
-}
-
-const music: MusicSnapshot = {
-  generatedAt: 10_000,
-  config: DEFAULT_MUSIC_CONFIG,
-  connection: 'Connected',
-  maybeSong: Option.none(),
-  maybeLastApplied: Option.none(),
-  maybeLastSkip: Option.none(),
-  maybeShow: Option.none(),
-}
-
-const musicLoaded: Model = {
-  ...loaded,
-  music: MusicRemote.Loaded({ snapshot: music }),
 }
 
 const screenColors: ScreenSnapshot = {
@@ -104,16 +85,11 @@ describe('Automations update', () => {
         Message.SucceededFetchSnapshot({ snapshot }),
       ),
       Command.resolve(
-        FetchMusic,
-        Message.SucceededFetchMusic({ snapshot: music }),
-      ),
-      Command.resolve(
         FetchScreenColors,
         Message.SucceededFetchScreenColors({ snapshot: screenColors }),
       ),
       model(current => {
         expect(current.remote._tag).toBe('Loaded')
-        expect(current.music._tag).toBe('Loaded')
         expect(current.screenColors._tag).toBe('Loaded')
       }),
     )
@@ -371,98 +347,6 @@ describe('Automations update', () => {
   })
 })
 
-describe('Music colors update', () => {
-  const enabled = { ...DEFAULT_MUSIC_CONFIG, isEnabled: true }
-
-  test('a change shows at once and saves without the save bar', () => {
-    story(
-      update,
-      given(musicLoaded),
-      message(Message.ChangedMusicConfig({ config: enabled })),
-      model(current => {
-        expect(current.isSavingMusic).toBe(true)
-        expect(Option.isNone(current.maybeDraft)).toBe(true)
-        expect(
-          MusicRemote.match(current.music, {
-            Loading: () => false,
-            Unavailable: () => false,
-            Loaded: ({ snapshot }) => snapshot.config.isEnabled,
-          }),
-        ).toBe(true)
-      }),
-      Command.expectHas(SaveMusic),
-      Command.resolve(
-        SaveMusic,
-        Message.SucceededSaveMusic({
-          snapshot: { ...music, config: enabled },
-        }),
-      ),
-      model(current => {
-        expect(current.isSavingMusic).toBe(false)
-      }),
-    )
-  })
-
-  test('a refresh during a save does not undo the change', () => {
-    story(
-      update,
-      given({ ...musicLoaded, isSavingMusic: true }),
-      message(Message.TickedRefresh()),
-      Command.expectHas(FetchSnapshot),
-      Command.resolve(
-        FetchSnapshot,
-        Message.SucceededFetchSnapshot({ snapshot }),
-      ),
-      Command.resolve(
-        FetchScreenColors,
-        Message.SucceededFetchScreenColors({ snapshot: screenColors }),
-      ),
-      message(Message.SucceededFetchMusic({ snapshot: music })),
-      model(current => {
-        expect(current.isSavingMusic).toBe(true)
-      }),
-    )
-  })
-
-  test('a failed save says so and reloads the saved settings', () => {
-    story(
-      update,
-      given(musicLoaded),
-      message(Message.ChangedMusicConfig({ config: enabled })),
-      Command.resolve(
-        SaveMusic,
-        Message.FailedSaveMusic({ error: 'no answer' }),
-      ),
-      model(current => {
-        expect(current.isSavingMusic).toBe(false)
-        expect(current.maybeProblem).toEqual(
-          Option.some("Music colors weren't saved: no answer."),
-        )
-      }),
-      Command.resolve(
-        FetchMusic,
-        Message.SucceededFetchMusic({ snapshot: music }),
-      ),
-      model(current => {
-        expect(current.music).toEqual(MusicRemote.Loaded({ snapshot: music }))
-      }),
-    )
-  })
-
-  test('an older service without music colors shows it as unavailable', () => {
-    story(
-      update,
-      given(loaded),
-      message(Message.FailedFetchMusic({ error: 'Not found.' })),
-      model(current => {
-        expect(current.music).toEqual(
-          MusicRemote.Unavailable({ reason: 'Not found.' }),
-        )
-      }),
-    )
-  })
-})
-
 describe('Screen colors update', () => {
   const enabled = { ...DEFAULT_SCREEN_CONFIG, isEnabled: true }
 
@@ -499,14 +383,10 @@ describe('Screen colors update', () => {
     )
   })
 
-  test('a refresh during a save fetches neither saving automation', () => {
+  test('a refresh during a save does not undo the change', () => {
     story(
       update,
-      given({
-        ...screenLoaded,
-        isSavingScreenColors: true,
-        isSavingMusic: true,
-      }),
+      given({ ...screenLoaded, isSavingScreenColors: true }),
       message(Message.TickedRefresh()),
       Command.resolve(
         FetchSnapshot,

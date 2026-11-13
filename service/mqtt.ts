@@ -1,7 +1,7 @@
 import { Array, Data, Duration, Effect, Option, pipe } from 'effect'
 import mqtt, { type MqttClient } from 'mqtt'
 
-import { type BulbCapabilities } from '../src/music'
+import { type BulbCapabilities } from '../src/bulbColor'
 import { type LightsPort } from './engine'
 import { type JsonObject, type LightStates, isJsonObject } from './flash'
 

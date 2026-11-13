@@ -10,19 +10,12 @@ import {
   normalizeConfig,
 } from '../src/automation'
 import {
-  MUSIC_API_PATH,
-  MusicConfig,
-  MusicSnapshot,
-  musicConfigProblem,
-} from '../src/music'
-import {
   SCREEN_API_PATH,
   ScreenConfig,
   ScreenSnapshot,
   screenConfigProblem,
 } from '../src/screen'
 import { type Engine } from './engine'
-import { type MusicSync } from './music'
 import { type ScreenSync } from './screen'
 
 const MAX_BODY_BYTES = 64 * 1024
@@ -38,7 +31,6 @@ const failure = (status: number, error: string): Response =>
   json(status, { error })
 
 const encodeSnapshot = Schema.encodeSync(Snapshot)
-const encodeMusicSnapshot = Schema.encodeSync(MusicSnapshot)
 const encodeScreenSnapshot = Schema.encodeSync(ScreenSnapshot)
 
 const parseBody = async (request: Request): Promise<unknown> => {
@@ -59,7 +51,6 @@ const isOversized = (request: Request): boolean =>
 
 export type HttpDeps = Readonly<{
   engine: Engine
-  music: MusicSync
   screen: ScreenSync
   requestRestart: () => void
   run: <A>(effect: Effect.Effect<A>) => Promise<A>
@@ -67,14 +58,13 @@ export type HttpDeps = Readonly<{
 
 export const makeHandler = ({
   engine,
-  music,
   screen,
   requestRestart,
   run,
 }: HttpDeps) => {
   /**
    * `GET` the automation's snapshot, or `PUT /config` its settings, which
-   * apply at once. Music colors and Screen colors work the same way.
+   * apply at once. Screen colors works this way.
    */
   const handleColorAutomation =
     <Config extends Readonly<{ group: string }>, Snapshot>(
@@ -119,13 +109,6 @@ export const makeHandler = ({
           }),
       })
     }
-
-  const handleMusic = handleColorAutomation(
-    music,
-    Schema.decodeUnknownOption(MusicConfig),
-    musicConfigProblem,
-    encodeMusicSnapshot,
-  )
 
   const handleScreen = handleColorAutomation(
     screen,
@@ -208,12 +191,6 @@ export const makeHandler = ({
 
   return async (request: Request): Promise<Response> => {
     const { pathname } = new URL(request.url)
-    if (
-      pathname === MUSIC_API_PATH ||
-      pathname.startsWith(`${MUSIC_API_PATH}/`)
-    ) {
-      return handleMusic(pathname.slice(MUSIC_API_PATH.length), request)
-    }
     if (
       pathname === SCREEN_API_PATH ||
       pathname.startsWith(`${SCREEN_API_PATH}/`)

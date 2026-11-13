@@ -7,7 +7,7 @@ import {
   type ScreenConfig,
 } from '../src/screen'
 import { type JsonObject } from './flash'
-import { type FeedEvent, type MusicLightsPort } from './music'
+import { type FeedEvent, type PaintLightsPort } from './paint'
 import { decide, makeScreenSync } from './screen'
 
 const ON: JsonObject = { state: 'ON', brightness: 120 }
@@ -63,7 +63,7 @@ describe('makeScreenSync', () => {
   const setup = (config: ScreenConfig) => {
     const sent: Array<Readonly<{ name: string; payload: JsonObject }>> = []
     const feedOpens: Array<'open' | 'close'> = []
-    const port: MusicLightsPort<string> = {
+    const port: PaintLightsPort<string> = {
       groupMembers: group =>
         group === 'All Lights' ? ['Orb', 'Shroom'] : ['Lamp'],
       activeRainbowGroups: () => [],

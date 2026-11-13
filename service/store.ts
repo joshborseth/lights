@@ -9,11 +9,6 @@ import {
   configProblem,
 } from '../src/automation'
 import {
-  DEFAULT_MUSIC_CONFIG,
-  MusicConfig,
-  musicConfigProblem,
-} from '../src/music'
-import {
   DEFAULT_SCREEN_CONFIG,
   ScreenConfig,
   screenConfigProblem,
@@ -27,7 +22,6 @@ export type StorePaths = Readonly<{
   seen: string
   activity: string
   mqttEnv: string
-  music: string
   screen: string
 }>
 
@@ -37,7 +31,6 @@ export const defaultPaths = (home: string): StorePaths => ({
   seen: join(home, '.local/state/pr-merge-lights/seen.json'),
   activity: join(home, '.local/state/pr-merge-lights/activity.json'),
   mqttEnv: join(home, '.config/pr-merge-lights/mqtt.env'),
-  music: join(home, '.config/pr-merge-lights/music.json'),
   screen: join(home, '.config/pr-merge-lights/screen.json'),
 })
 
@@ -242,31 +235,6 @@ export const readMqttOptions = (
           })
     })
   })
-
-/** Music colors settings. Missing or unreadable settings start it off. */
-export const readMusicConfig = (
-  paths: StorePaths,
-): Effect.Effect<MusicConfig> =>
-  Effect.gen(function* () {
-    const maybeText = yield* readText(paths.music)
-    return pipe(
-      maybeText,
-      Option.flatMap(text =>
-        Schema.decodeUnknownOption(MusicConfig)(parseJson(text)),
-      ),
-      Option.filter(config => Option.isNone(musicConfigProblem(config))),
-      Option.getOrElse(() => DEFAULT_MUSIC_CONFIG),
-    )
-  })
-
-export const saveMusicConfig =
-  (paths: StorePaths) =>
-  (config: MusicConfig): Effect.Effect<void> =>
-    writeJsonAtomic(paths.music, config).pipe(
-      Effect.catchDefect(defect =>
-        Effect.logError(`Could not write ${paths.music}: ${defect}`),
-      ),
-    )
 
 /** Screen colors settings. Missing or unreadable settings start it off. */
 export const readScreenConfig = (

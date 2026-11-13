@@ -20,9 +20,9 @@ import {
 import {
   type ApplyResult,
   type FeedEvent,
-  type MusicLightsPort,
+  type PaintLightsPort,
   applyColor,
-} from './music'
+} from './paint'
 
 /*
  * Screen colors. While Screen colors is on, listens to the Joshflix relay's
@@ -30,14 +30,14 @@ import {
  * relay already waits for a new color to hold before sending it, so only a
  * short settle is needed here. While it is off, the service doesn't listen
  * at all, so the TV stops reading its picture. Commands run under the same
- * lock as the PR flash and Music colors.
+ * lock as the PR flash.
  */
 
 /** How long a new color must stay current before the bulbs follow it. */
 export const SETTLE_MS = 400
 
 export type ScreenPorts<E> = Readonly<{
-  lights: MusicLightsPort<E>
+  lights: PaintLightsPort<E>
   withLightsLock: <A, E2>(effect: Effect.Effect<A, E2>) => Effect.Effect<A, E2>
   saveConfig: (config: ScreenConfig) => Effect.Effect<void>
   /** The relay's feed. Run only while Screen colors is on. */
@@ -120,9 +120,7 @@ export const makeScreenSync = <E>(
       const { color, title } = decision
       yield* Ref.set(appliedColorRef, Option.some(color))
       const result = yield* ports
-        .withLightsLock(
-          applyColor(ports.lights, Option.some(color), config.group),
-        )
+        .withLightsLock(applyColor(ports.lights, color, config.group))
         .pipe(
           Effect.catch(error =>
             Effect.succeed<ApplyResult>({

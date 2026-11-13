@@ -1,7 +1,6 @@
 import { Option } from 'effect'
 import {
   Command,
-  change,
   click,
   expect,
   given,
@@ -26,7 +25,6 @@ import {
   update,
 } from './main'
 import * as Manage from './manage'
-import { DEFAULT_MUSIC_CONFIG, type MusicSnapshot } from './music'
 import { DEFAULT_SCREEN_CONFIG, type ScreenSnapshot } from './screen'
 import { view } from './view'
 
@@ -533,172 +531,6 @@ describe('Connections', () => {
         }),
       ),
       expect(label('Poll every (seconds)')).toHaveValue('30'),
-    )
-  })
-})
-
-const music: MusicSnapshot = {
-  generatedAt: 100_000,
-  config: { ...DEFAULT_MUSIC_CONFIG, isEnabled: true, group: 'Bedroom' },
-  connection: 'Connected',
-  maybeSong: Option.some({
-    title: 'Nevermind',
-    artists: 'Nirvana',
-    isPlaying: true,
-    isOnTv: true,
-    maybeColor: Option.some('#1281b6'),
-  }),
-  maybeLastApplied: Option.some({
-    at: 40_000,
-    title: 'Nevermind',
-    color: '#0091ff',
-    lights: 3,
-  }),
-  maybeLastSkip: Option.none(),
-  maybeShow: Option.none(),
-}
-
-const withMusic = (
-  snapshotValue: MusicSnapshot,
-  screen: Automations.Screen = Automations.Screen.List(),
-): Model => ({
-  ...loaded,
-  automations: {
-    ...loaded.automations,
-    screen,
-    music: Automations.MusicRemote.Loaded({ snapshot: snapshotValue }),
-  },
-})
-
-describe('Music colors', () => {
-  test('lists the automation with the last song it followed', () => {
-    scene(
-      { update, view },
-      given(withMusic(music)),
-      expect(role('button', { name: 'Open Music colors' })).toExist(),
-      expect(text('Nevermind · 1m ago')).toExist(),
-      expect(role('switch', { name: 'Music colors' })).toBeChecked(),
-    )
-  })
-
-  test('says Off on the row when it is off', () => {
-    scene(
-      { update, view },
-      given(
-        withMusic({
-          ...music,
-          config: { ...music.config, isEnabled: false },
-        }),
-      ),
-      expect(role('switch', { name: 'Music colors' })).not.toBeChecked(),
-      expect(text('Off')).toExist(),
-    )
-  })
-
-  test('opens to what is playing, what changed, and its settings', () => {
-    scene(
-      { update, view },
-      given(withMusic(music)),
-      click(role('button', { name: 'Open Music colors' })),
-      expect(role('heading', { name: 'Music colors' })).toExist(),
-      expect(text('Listening to the music app')).toExist(),
-      expect(text('Nevermind · Nirvana · on the TV')).toExist(),
-      expect(text('Lights changed 1m ago')).toExist(),
-      expect(text('Nevermind on 3 lights')).toExist(),
-      expect(role('combobox')).toHaveValue('Bedroom'),
-      expect(role('switch', { name: 'Only on the TV' })).toExist(),
-      expect(role('switch', { name: 'Mix colors' })).not.toExist(),
-    )
-  })
-
-  test('a setting saves as soon as it changes', () => {
-    scene(
-      { update, view },
-      given(withMusic(music, Automations.Screen.Music())),
-      click(role('switch', { name: 'Only on the TV' })),
-      Command.expectHas(Automations.SaveMusic),
-      expect(role('switch', { name: 'Only on the TV' })).toBeDisabled(),
-      Command.resolve(
-        Automations.SaveMusic,
-        Automations.Message.SucceededSaveMusic({
-          snapshot: {
-            ...music,
-            config: { ...music.config, onlyOnTv: false },
-          },
-        }),
-      ),
-      expect(role('switch', { name: 'Only on the TV' })).not.toBeChecked(),
-    )
-  })
-
-  test('says why the latest song left the lights alone', () => {
-    scene(
-      { update, view },
-      given(
-        withMusic(
-          {
-            ...music,
-            maybeLastApplied: Option.none(),
-            maybeLastSkip: Option.some('No lights in Bedroom were on.'),
-          },
-          Automations.Screen.Music(),
-        ),
-      ),
-      expect(text('Left alone: No lights in Bedroom were on.')).toExist(),
-    )
-  })
-
-  test('offers the light show, off until turned on', () => {
-    scene(
-      { update, view },
-      given(withMusic(music, Automations.Screen.Music())),
-      expect(role('switch', { name: 'Light show' })).not.toBeChecked(),
-      expect(role('combobox', { name: 'Timing' })).not.toExist(),
-      click(role('switch', { name: 'Light show' })),
-      Command.expectHas(Automations.SaveMusic),
-      Command.resolve(
-        Automations.SaveMusic,
-        Automations.Message.SucceededSaveMusic({
-          snapshot: { ...music, config: { ...music.config, isShowOn: true } },
-        }),
-      ),
-      expect(role('switch', { name: 'Light show' })).toBeChecked(),
-      expect(text('Starts when a song plays.')).toExist(),
-      expect(role('combobox', { name: 'Timing' })).toHaveValue('0'),
-    )
-  })
-
-  test('shows what the light show is doing, and saves its timing', () => {
-    const showing: MusicSnapshot = {
-      ...music,
-      config: { ...music.config, isShowOn: true },
-      maybeShow: Option.some('Following the beat at 128 BPM · Chorus'),
-    }
-    scene(
-      { update, view },
-      given(withMusic(showing, Automations.Screen.Music())),
-      expect(text('Following the beat at 128 BPM · Chorus')).toExist(),
-      change(role('combobox', { name: 'Timing' }), '-100'),
-      Command.expectHas(Automations.SaveMusic),
-      Command.resolve(
-        Automations.SaveMusic,
-        Automations.Message.SucceededSaveMusic({
-          snapshot: {
-            ...showing,
-            config: { ...showing.config, showOffsetMs: -100 },
-          },
-        }),
-      ),
-      expect(role('combobox', { name: 'Timing' })).toHaveValue('-100'),
-      expect(text('100 ms earlier')).toExist(),
-    )
-  })
-
-  test('says when the music app cannot be reached', () => {
-    scene(
-      { update, view },
-      given(withMusic({ ...music, connection: 'Unreachable' })),
-      expect(text("Can't reach the music app")).toExist(),
     )
   })
 })

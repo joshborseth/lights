@@ -9,8 +9,7 @@ import { Option, Schema, String } from 'effect'
  * color comes only after the picture's color clearly changed and held for
  * 1.5 seconds. The automations service listens there, only while Screen
  * colors is on (the TV reads the picture only while someone listens), and
- * sends the bulb commands with Music colors' code, following the rules in
- * docs/migration-plan.md.
+ * sends the bulb commands following the rules in docs/migration-plan.md.
  */
 
 // CONFIG

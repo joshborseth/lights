@@ -96,6 +96,38 @@ const withNewBulb: Model = {
 }
 
 describe('Manage tab', () => {
+  test('the closet cannot be moved into a group', () => {
+    scene(
+      { update, view },
+      given({
+        ...base,
+        lights: [...base.lights, light('Closet', 'c')],
+        manage: {
+          ...base.manage,
+          screen: Manage.Screen.Light({ address: 'c' }),
+        },
+      }),
+      expect(role('heading', { name: 'Always bright white' })).toExist(),
+      expect(role('heading', { name: 'Move to' })).not.toExist(),
+    )
+  })
+
+  test('a group does not offer to add the closet', () => {
+    scene(
+      { update, view },
+      given({
+        ...base,
+        lights: [...base.lights, light('Closet', 'c')],
+        manage: {
+          ...base.manage,
+          screen: Manage.Screen.Group({ name: 'Bedroom' }),
+        },
+      }),
+      expect(role('checkbox', { name: 'UFO' })).toExist(),
+      expect(role('checkbox', { name: 'Closet' })).not.toExist(),
+    )
+  })
+
   test('starting pairing asks the bridge to open the network', () => {
     scene(
       { update, view },

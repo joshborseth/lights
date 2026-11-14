@@ -296,6 +296,31 @@ describe('house view', () => {
     )
   })
 
+  test('the closet has only its power switch', () => {
+    scene(
+      { update, view },
+      given({
+        ...loaded,
+        lights: [...loaded.lights, light('Closet', 'c')],
+        states: { ...loaded.states, Closet: on },
+        presets: [
+          {
+            name: 'Red',
+            brightness: 254,
+            look: PresetLook.Color({ hex: '#FF0000' }),
+          },
+        ],
+        focus: HouseFocus.Room({ roomId: 'Closet' }),
+      }),
+      expect(role('switch', { name: 'Closet power' })).toExist(),
+      expect(text('Bright white')).toExist(),
+      expect(role('slider', { name: 'Closet brightness' })).not.toExist(),
+      expect(role('slider', { name: 'Closet temperature' })).not.toExist(),
+      expect(role('slider', { name: 'Closet color' })).not.toExist(),
+      expect(role('button', { name: 'Red on Closet' })).not.toExist(),
+    )
+  })
+
   test('controls are inert while disconnected', () => {
     scene(
       { update, view },

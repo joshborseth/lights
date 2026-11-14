@@ -127,6 +127,13 @@ describe('whole-house groups', () => {
   test('is empty when no other named light exists', () => {
     expect(wholeHouseGroupNames([newLight], [], '0x99')).toEqual([])
   })
+
+  test('ignores a fixed light, which stays out of every group', () => {
+    const withCloset = [...withNewLight, light('Closet', 'h')]
+    expect(wholeHouseGroupNames(withCloset, groups, '0x99')).toEqual([
+      'All Lights',
+    ])
+  })
 })
 
 describe('editing a group', () => {

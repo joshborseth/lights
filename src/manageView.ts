@@ -22,6 +22,7 @@ import {
   isUnnamed,
   wholeHouseGroupNames,
 } from './domain'
+import { isFixedLight } from './fixedLight'
 import {
   type Context,
   type Failure,
@@ -488,9 +489,25 @@ const newDevicesView = (
   })
 
 const placeDetail = (light: Light, context: Context): string =>
-  Option.getOrElse(
-    currentPlace(context.lights, context.groups, light.address),
-    () => 'Not in a group',
+  isFixedLight(light.name)
+    ? 'Always bright white'
+    : Option.getOrElse(
+        currentPlace(context.lights, context.groups, light.address),
+        () => 'Not in a group',
+      )
+
+const fixedLightView = (h: HtmlBuilder<Message>): Html =>
+  h.section(
+    [h.Class(SECTION)],
+    [
+      h.h2([h.Class(GROUP_LABEL)], ['Always bright white']),
+      h.p(
+        [h.Class(CAPTION)],
+        [
+          'This light stays out of every group, so groups, scenes, and automations never change it. Only its own switch turns it on and off.',
+        ],
+      ),
+    ],
   )
 
 const nameOrder = Order.mapInput(
@@ -749,21 +766,25 @@ const lightView = (
           backButtonView(h),
           h.h2([h.Class(SCREEN_TITLE)], [light.name]),
           renameFormView(model, inputs, 'light-name', h),
-          Array.isReadonlyArrayEmpty(places)
-            ? h.empty
-            : h.section(
-                [h.Class(SECTION)],
-                [
-                  h.h2([h.Class(GROUP_LABEL)], ['Move to']),
-                  placesListView(
-                    model,
-                    places,
-                    currentPlace(context.lights, context.groups, address),
-                    h,
-                  ),
-                ],
-              ),
-          alsoInView(model, light, context, h),
+          ...(isFixedLight(light.name)
+            ? [fixedLightView(h)]
+            : [
+                Array.isReadonlyArrayEmpty(places)
+                  ? h.empty
+                  : h.section(
+                      [h.Class(SECTION)],
+                      [
+                        h.h2([h.Class(GROUP_LABEL)], ['Move to']),
+                        placesListView(
+                          model,
+                          places,
+                          currentPlace(context.lights, context.groups, address),
+                          h,
+                        ),
+                      ],
+                    ),
+                alsoInView(model, light, context, h),
+              ]),
           removeSectionView(
             model,
             'Remove light',
@@ -836,7 +857,12 @@ const groupView = (
               h.div(
                 [h.Class(cn(LIST, isBusy(model) && 'opacity-60'))],
                 memberRowsView(
-                  context.lights,
+                  Array.filter(
+                    context.lights,
+                    light =>
+                      !isFixedLight(light.name) ||
+                      Array.contains(group.memberAddresses, light.address),
+                  ),
                   address => Array.contains(group.memberAddresses, address),
                   address => Message.ClickedMember({ address }),
                   h,

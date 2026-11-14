@@ -166,3 +166,26 @@ describe('bulb capabilities', () => {
     expect(lights.capabilitiesOf('Unknown').supportsColor).toBe(false)
   })
 })
+
+describe('group members', () => {
+  test('leaves out a fixed light, so nothing repaints it', async () => {
+    const { fake, lights } = await setup()
+    const emit = (topic: string, payload: unknown) =>
+      fake.emit(
+        'message',
+        `zigbee2mqtt/${topic}`,
+        Buffer.from(JSON.stringify(payload)),
+      )
+    emit('bridge/devices', [
+      { ieee_address: '0xa', friendly_name: 'Bedroom UFO' },
+      { ieee_address: '0xb', friendly_name: 'Closet' },
+    ])
+    emit('bridge/groups', [
+      {
+        friendly_name: 'Bedroom',
+        members: [{ ieee_address: '0xa' }, { ieee_address: '0xb' }],
+      },
+    ])
+    expect(lights.groupMembers('Bedroom')).toEqual(['Bedroom UFO'])
+  })
+})

@@ -48,17 +48,15 @@ import {
   clampGroupLevel,
   decodeFrame,
   deletePresetFrame,
-  fixedLightOnFrame,
-  fixedLightWhiteFrame,
   hueSaturationToHex,
   powerFrame,
   savePresetFrame,
   settingFrame,
 } from './domain'
-import { isFixedLight } from './fixedLight'
 import { HouseFocus, groupOfRoom, placedBulbs, roomById } from './house'
 import { type HouseRoom, RoomId } from './housePlan'
 import * as Manage from './manage'
+import { isOutsideWholeHouse } from './wholeHouse'
 
 const CONNECTION_TIMEOUT_MS = 5000
 const MAX_RECONNECT_DELAY_MS = 30_000
@@ -66,7 +64,6 @@ const BASE_RECONNECT_DELAY_MS = 500
 const SETTING_THROTTLE_MS = 400
 const PAGE_SCROLL_SETTLE_MS = 300
 const REPEAT_GROUP_POWER_DELAY_MS = 400
-const FIXED_LIGHT_WHITE_REPEAT_MS = 1200
 const MAX_PRESET_NAME_LENGTH = 40
 const AUTOMATIONS_REFRESH_MS = 5000
 const SUSPECT_SOCKET_AFTER_HIDDEN_MS = 5000
@@ -353,16 +350,6 @@ const commandNames = (target: Target): ReadonlyArray<string> =>
     Room: ({ lightNames }) => lightNames,
   })
 
-const adjustableNames = (target: Target): ReadonlyArray<string> =>
-  Array.filter(commandNames(target), name => !isFixedLight(name))
-
-export const isFixedTarget = (target: Target): boolean =>
-  Target.match(target, {
-    Light: ({ name }) => isFixedLight(name),
-    Group: () => false,
-    Room: ({ lightNames }) => Array.every(lightNames, isFixedLight),
-  })
-
 export const roomLights = (
   model: Model,
   room: HouseRoom,
@@ -400,19 +387,19 @@ export const roomTarget = (
   })
 }
 
-// NOTE: Fixed lights stay out of every group, so the whole house is the group
-// holding every other bulb.
+// NOTE: Bulbs outside the whole house, such as the closet, stay out of every
+// group, so the whole house is the group holding every other bulb.
 export const wholeHouseTarget = (model: Model): Option.Option<Target> => {
-  const adjustableLights = Array.filter(
+  const wholeHouseLights = Array.filter(
     model.lights,
-    light => !isFixedLight(light.name),
+    light => !isOutsideWholeHouse(light.name),
   )
-  return Array.isReadonlyArrayEmpty(adjustableLights)
+  return Array.isReadonlyArrayEmpty(wholeHouseLights)
     ? Option.none()
     : pipe(
         model.groups,
         Array.findFirst(group =>
-          Array.every(adjustableLights, light =>
+          Array.every(wholeHouseLights, light =>
             Array.contains(group.memberAddresses, light.address),
           ),
         ),
@@ -930,19 +917,8 @@ const startActivity = (
   ],
 })
 
-const powerCommands = (name: string, power: Power) =>
-  isFixedLight(name) && power === 'ON'
-    ? [
-        SendFrameTwice({ frame: fixedLightOnFrame(name) }),
-        SendFrameLater({
-          frame: fixedLightWhiteFrame(name),
-          delayMs: FIXED_LIGHT_WHITE_REPEAT_MS,
-        }),
-      ]
-    : [SendFrameTwice({ frame: powerFrame(name, power) })]
-
 const settingCommands = (target: Target, setting: Setting) => [
-  ...Array.map(adjustableNames(target), name =>
+  ...Array.map(commandNames(target), name =>
     SendFrame({ frame: settingFrame(name, setting) }),
   ),
   WaitForThrottle({ target, kind: settingKindOf(setting) }),
@@ -1102,7 +1078,7 @@ const updatedSetting = (
   target: Target,
   setting: Setting,
 ): UpdateReturn => {
-  if (model.connection._tag !== 'Connected' || isFixedTarget(target)) {
+  if (model.connection._tag !== 'Connected') {
     return { model }
   }
   const isThisDraft = isDraftFor(target, settingKindOf(setting))
@@ -1295,7 +1271,9 @@ export const update = (model: Model, message: Message) =>
         target,
         Activity.SettingPower({ power }),
         POWER_CONFIRM_TIMEOUT_MS,
-        Array.flatMap(commandNames(target), name => powerCommands(name, power)),
+        Array.map(commandNames(target), name =>
+          SendFrameTwice({ frame: powerFrame(name, power) }),
+        ),
       )
     },
 
@@ -1401,11 +1379,7 @@ export const update = (model: Model, message: Message) =>
         activity =>
           activity._tag === 'ApplyingPreset' && activity.preset === preset,
       )
-      if (
-        isAlreadyApplying ||
-        model.connection._tag !== 'Connected' ||
-        isFixedTarget(target)
-      ) {
+      if (isAlreadyApplying || model.connection._tag !== 'Connected') {
         return { model }
       }
       return startActivity(
@@ -1420,8 +1394,8 @@ export const update = (model: Model, message: Message) =>
           Group: ({ name }) => [
             SendFrame({ frame: applyPresetFrame(name, preset) }),
           ],
-          Room: () =>
-            Array.map(adjustableNames(target), name =>
+          Room: ({ lightNames }) =>
+            Array.map(lightNames, name =>
               SendFrame({ frame: applyLightPresetFrame(name, preset) }),
             ),
         }),
@@ -1624,17 +1598,6 @@ export const SendFrameTwice = Command.define('SendFrameTwice', {
       Effect.andThen(
         Effect.sleep(Duration.millis(REPEAT_GROUP_POWER_DELAY_MS)),
       ),
-      Effect.andThen(sendOnSocket(frame)),
-      Effect.as(Message.SucceededSendFrame()),
-      Effect.catch(error => Effect.succeed(Message.FailedSendFrame({ error }))),
-    ),
-})
-
-export const SendFrameLater = Command.define('SendFrameLater', {
-  args: { frame: Schema.String, delayMs: Schema.Number },
-  messages: [Message.SucceededSendFrame, Message.FailedSendFrame],
-  execute: ({ frame, delayMs }) =>
-    Effect.sleep(Duration.millis(delayMs)).pipe(
       Effect.andThen(sendOnSocket(frame)),
       Effect.as(Message.SucceededSendFrame()),
       Effect.catch(error => Effect.succeed(Message.FailedSendFrame({ error }))),

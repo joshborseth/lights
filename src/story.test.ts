@@ -24,7 +24,6 @@ import {
   PageScroll,
   PresetEditor,
   SendFrame,
-  SendFrameLater,
   SendFrameTwice,
   SliderId,
   Startup,
@@ -1486,7 +1485,7 @@ describe('previewing a drag in the house', () => {
   })
 })
 
-describe('fixed light', () => {
+describe('the closet', () => {
   const closet = Target.Light({ name: 'Closet' })
   const withCloset: Model = {
     ...base,
@@ -1502,41 +1501,13 @@ describe('fixed light', () => {
     states: { ...base.states, Closet: state('OFF') },
   }
 
-  test('comes on as bright white, then gets its white again by itself', () => {
+  test('turns on like any other light', () => {
     story(
       update,
       given(withCloset),
       message(Message.ClickedPower({ target: closet })),
       Command.expectHas(
-        SendFrameTwice({
-          frame: frameOf('Closet/set', {
-            state: 'ON',
-            brightness: 254,
-            color_temp: 250,
-          }),
-        }),
-        SendFrameLater({
-          frame: frameOf('Closet/set', { color_temp: 250 }),
-          delayMs: 1200,
-        }),
-      ),
-      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
-      Command.resolve(SendFrameLater, Message.SucceededSendFrame()),
-      settleTimedOut(1),
-      settleTimedOut(2),
-    )
-  })
-
-  test('turns off with the exact off command', () => {
-    story(
-      update,
-      given({
-        ...withCloset,
-        states: { ...withCloset.states, Closet: state('ON') },
-      }),
-      message(Message.ClickedPower({ target: closet })),
-      Command.expectHas(
-        SendFrameTwice({ frame: frameOf('Closet/set', { state: 'OFF' }) }),
+        SendFrameTwice({ frame: frameOf('Closet/set', { state: 'ON' }) }),
       ),
       Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
       settleTimedOut(1),
@@ -1544,21 +1515,18 @@ describe('fixed light', () => {
     )
   })
 
-  test('ignores brightness, color, and presets', () => {
+  test('takes a preset of its own', () => {
     story(
       update,
       given(withCloset),
-      message(
-        Message.UpdatedSetting({
-          target: closet,
-          setting: Setting.Color({ hue: 120 }),
-        }),
-      ),
       message(Message.ClickedPreset({ target: closet, preset: 'Red' })),
-      model(next => {
-        expect(next.drafts).toEqual([])
-        expect(next.activities).toEqual([])
-      }),
+      Command.expectHas(
+        SendFrame({
+          frame: frameOf('preset/set', { name: 'Red', light: 'Closet' }),
+        }),
+      ),
+      Command.resolve(SendFrame, Message.SucceededSendFrame()),
+      settleTimedOut(1),
     )
   })
 

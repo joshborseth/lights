@@ -296,7 +296,7 @@ describe('house view', () => {
     )
   })
 
-  test('the closet has only its power switch', () => {
+  test('the closet keeps its own controls', () => {
     scene(
       { update, view },
       given({
@@ -313,11 +313,8 @@ describe('house view', () => {
         focus: HouseFocus.Room({ roomId: 'Closet' }),
       }),
       expect(role('switch', { name: 'Closet power' })).toExist(),
-      expect(text('Bright white')).toExist(),
-      expect(role('slider', { name: 'Closet brightness' })).not.toExist(),
-      expect(role('slider', { name: 'Closet temperature' })).not.toExist(),
-      expect(role('slider', { name: 'Closet color' })).not.toExist(),
-      expect(role('button', { name: 'Red on Closet' })).not.toExist(),
+      expect(role('slider', { name: 'Closet brightness' })).toExist(),
+      expect(role('button', { name: 'Red on Closet' })).toExist(),
     )
   })
 

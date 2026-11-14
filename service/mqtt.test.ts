@@ -168,7 +168,7 @@ describe('bulb capabilities', () => {
 })
 
 describe('group members', () => {
-  test('leaves out a fixed light, so nothing repaints it', async () => {
+  test('leaves out the closet, so nothing whole-house repaints it', async () => {
     const { fake, lights } = await setup()
     const emit = (topic: string, payload: unknown) =>
       fake.emit(

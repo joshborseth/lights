@@ -11,6 +11,12 @@ import {
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 
+import {
+  fixedLightOnPayload,
+  fixedLightWhitePayload,
+  isFixedLight,
+} from './fixedLight'
+
 export const MIN_BRIGHTNESS = 1
 export const MAX_BRIGHTNESS = 254
 export const DEFAULT_COLOR_TEMP = 370
@@ -357,7 +363,8 @@ const withoutExisting = (
   )
 
 // NOTE: Bulbs still waiting for a name are left out, so that pairing two at
-// once doesn't stop All Lights from counting as the whole house.
+// once doesn't stop All Lights from counting as the whole house. Fixed lights
+// are left out too, because they stay out of every group.
 export const wholeHouseGroupNames = (
   lights: ReadonlyArray<Light>,
   groups: ReadonlyArray<Group>,
@@ -365,7 +372,12 @@ export const wholeHouseGroupNames = (
 ): ReadonlyArray<string> => {
   const otherNamedAddresses = pipe(
     lights,
-    Array.filter(light => light.address !== address && !isUnnamed(light)),
+    Array.filter(
+      light =>
+        light.address !== address &&
+        !isUnnamed(light) &&
+        !isFixedLight(light.name),
+    ),
     Array.map(light => light.address),
   )
   return Array.isReadonlyArrayEmpty(otherNamedAddresses)
@@ -862,6 +874,14 @@ export const encodeFrame = (topic: string, payload: unknown): string =>
 
 export const powerFrame = (name: string, power: Power): string =>
   encodeFrame(`${name}/set`, { state: power })
+
+// NOTE: A fixed light always comes on as the same bright white, and its white
+// is sent again by itself once it is on, as the rules for the bulbs require.
+export const fixedLightOnFrame = (name: string): string =>
+  encodeFrame(`${name}/set`, fixedLightOnPayload)
+
+export const fixedLightWhiteFrame = (name: string): string =>
+  encodeFrame(`${name}/set`, fixedLightWhitePayload)
 
 export const settingFrame = (name: string, setting: Setting): string =>
   encodeFrame(

@@ -24,6 +24,7 @@ import {
   PageScroll,
   PresetEditor,
   SendFrame,
+  SendFrameLater,
   SendFrameTwice,
   SliderId,
   Startup,
@@ -36,6 +37,7 @@ import {
   statesWithDrafts,
   targetStatus,
   update,
+  wholeHouseTarget,
 } from './main'
 import * as Manage from './manage'
 
@@ -1481,5 +1483,88 @@ describe('previewing a drag in the house', () => {
 
   test('with no drag the reported state stands', () => {
     expect(statesWithDrafts(base)).toEqual(base.states)
+  })
+})
+
+describe('fixed light', () => {
+  const closet = Target.Light({ name: 'Closet' })
+  const withCloset: Model = {
+    ...base,
+    lights: [
+      ...base.lights,
+      {
+        name: 'Closet',
+        address: 'c',
+        maybeColorTempRange: Option.some({ min: 153, max: 500 }),
+        supportsColor: true,
+      },
+    ],
+    states: { ...base.states, Closet: state('OFF') },
+  }
+
+  test('comes on as bright white, then gets its white again by itself', () => {
+    story(
+      update,
+      given(withCloset),
+      message(Message.ClickedPower({ target: closet })),
+      Command.expectHas(
+        SendFrameTwice({
+          frame: frameOf('Closet/set', {
+            state: 'ON',
+            brightness: 254,
+            color_temp: 250,
+          }),
+        }),
+        SendFrameLater({
+          frame: frameOf('Closet/set', { color_temp: 250 }),
+          delayMs: 1200,
+        }),
+      ),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      Command.resolve(SendFrameLater, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
+    )
+  })
+
+  test('turns off with the exact off command', () => {
+    story(
+      update,
+      given({
+        ...withCloset,
+        states: { ...withCloset.states, Closet: state('ON') },
+      }),
+      message(Message.ClickedPower({ target: closet })),
+      Command.expectHas(
+        SendFrameTwice({ frame: frameOf('Closet/set', { state: 'OFF' }) }),
+      ),
+      Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+      settleTimedOut(1),
+      settleTimedOut(2),
+    )
+  })
+
+  test('ignores brightness, color, and presets', () => {
+    story(
+      update,
+      given(withCloset),
+      message(
+        Message.UpdatedSetting({
+          target: closet,
+          setting: Setting.Color({ hue: 120 }),
+        }),
+      ),
+      message(Message.ClickedPreset({ target: closet, preset: 'Red' })),
+      model(next => {
+        expect(next.drafts).toEqual([])
+        expect(next.activities).toEqual([])
+      }),
+    )
+  })
+
+  test('the whole house is the group holding every other bulb', () => {
+    expect(wholeHouseTarget(withCloset)).toEqual(
+      Option.some(Target.Group({ name: 'All Lights' })),
+    )
   })
 })

@@ -24,7 +24,7 @@ bun run build
 
 The app has one address, `http://192.168.1.67:8445`. It works on the home network without Tailscale. Away from home it works while Tailscale is connected, through a subnet route for that one address.
 
-The address is plain HTTP, so browsers give it no service worker. The app needs a connection to open, and Android Chrome adds a shortcut instead of installing it.
+The address is plain HTTP, so browsers give it no service worker. Instead, the app checks for a new build each time it returns to the foreground and reloads itself. The app needs a connection to open, and Android Chrome adds a shortcut instead of installing it.
 
 1. Open the address in Safari. On Android, use Chrome.
 2. Choose Share, then Add to Home Screen.

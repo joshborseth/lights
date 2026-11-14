@@ -1,5 +1,6 @@
 import { Runtime } from 'foldkit'
 
+import { reloadOnNewBuild } from './freshBuild'
 import { registerHouseSceneElement } from './houseElement'
 import {
   Message,
@@ -31,6 +32,9 @@ const application = Runtime.makeApplication({
 
 Runtime.run(application)
 
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  startServiceWorker(navigator.serviceWorker)
+if (import.meta.env.PROD) {
+  reloadOnNewBuild()
+  if ('serviceWorker' in navigator) {
+    startServiceWorker(navigator.serviceWorker)
+  }
 }

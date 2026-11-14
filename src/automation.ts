@@ -81,7 +81,7 @@ const workdayWindow = (day: Weekday): DayWindow => ({
 })
 
 export const DEFAULT_CONFIG: PrMergeConfig = {
-  accounts: ['joshborseth', 'hubot'],
+  accounts: ['joshborseth'],
   ignoredRepos: [],
   polling: {
     intervalSeconds: 5,

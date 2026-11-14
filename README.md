@@ -43,3 +43,7 @@ node scripts/deploy-extension.mjs      # this checkout, preset extension only
 ./scripts/deploy-automations.sh        # this checkout, automations service only
 ./scripts/deploy-lan.sh                # this checkout, local network server only
 ```
+
+## License
+
+[MIT](LICENSE)

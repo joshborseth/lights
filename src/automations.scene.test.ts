@@ -422,6 +422,8 @@ describe('PR merged detail', () => {
     scene(
       { update, view },
       given(prMerged('When')),
+      type(label('Add to GitHub accounts'), 'hubot'),
+      click(role('button', { name: 'Add GitHub accounts' })),
       click(role('button', { name: 'Remove hubot' })),
       type(label('Add to GitHub accounts'), 'octocat'),
       click(role('button', { name: 'Add GitHub accounts' })),

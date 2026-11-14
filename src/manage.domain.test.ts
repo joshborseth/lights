@@ -128,7 +128,7 @@ describe('whole-house groups', () => {
     expect(wholeHouseGroupNames([newLight], [], '0x99')).toEqual([])
   })
 
-  test('ignores a fixed light, which stays out of every group', () => {
+  test('ignores the closet, which stays out of every group', () => {
     const withCloset = [...withNewLight, light('Closet', 'h')]
     expect(wholeHouseGroupNames(withCloset, groups, '0x99')).toEqual([
       'All Lights',

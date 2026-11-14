@@ -2,7 +2,7 @@ import { Array, Data, Duration, Effect, Option, pipe } from 'effect'
 import mqtt, { type MqttClient } from 'mqtt'
 
 import { type BulbCapabilities } from '../src/bulbColor'
-import { isFixedLight } from '../src/fixedLight'
+import { isOutsideWholeHouse } from '../src/wholeHouse'
 import { type LightsPort } from './engine'
 import { type JsonObject, type LightStates, isJsonObject } from './flash'
 
@@ -213,15 +213,15 @@ export const connectLights = (
           }).pipe(Effect.asVoid)
         : Effect.fail(new LightsError({ reason: 'not connected to MQTT' }))
 
-    // NOTE: A fixed light, such as the closet bulb, stays bright white. It is
-    // kept out of every group, and is skipped here too in case it is added
-    // back, so the flash and Screen colors never repaint it.
+    // NOTE: A bulb outside the whole house, such as the closet bulb, is kept
+    // out of every group, and is skipped here too in case it is added back, so
+    // the flash and Screen colors never repaint it.
     const groupMembers = (group: string): ReadonlyArray<string> =>
       pipe(
         groupAddresses.get(group) ?? [],
         Array.map(address => Option.fromUndefinedOr(addressNames.get(address))),
         Array.getSomes,
-        Array.filter(name => !isFixedLight(name)),
+        Array.filter(name => !isOutsideWholeHouse(name)),
       )
 
     const knownStates = (names: ReadonlyArray<string>): LightStates =>

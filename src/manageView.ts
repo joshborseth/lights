@@ -22,7 +22,6 @@ import {
   isUnnamed,
   wholeHouseGroupNames,
 } from './domain'
-import { isFixedLight } from './fixedLight'
 import {
   type Context,
   type Failure,
@@ -36,6 +35,7 @@ import {
   nameIsChanged,
   nameProblem,
 } from './manage'
+import { isOutsideWholeHouse } from './wholeHouse'
 
 const CARD =
   'flex flex-col gap-3 rounded-xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10'
@@ -489,22 +489,22 @@ const newDevicesView = (
   })
 
 const placeDetail = (light: Light, context: Context): string =>
-  isFixedLight(light.name)
-    ? 'Always bright white'
+  isOutsideWholeHouse(light.name)
+    ? 'Not part of the whole house'
     : Option.getOrElse(
         currentPlace(context.lights, context.groups, light.address),
         () => 'Not in a group',
       )
 
-const fixedLightView = (h: HtmlBuilder<Message>): Html =>
+const outsideWholeHouseView = (h: HtmlBuilder<Message>): Html =>
   h.section(
     [h.Class(SECTION)],
     [
-      h.h2([h.Class(GROUP_LABEL)], ['Always bright white']),
+      h.h2([h.Class(GROUP_LABEL)], ['Not part of the whole house']),
       h.p(
         [h.Class(CAPTION)],
         [
-          'This light stays out of every group, so groups, scenes, and automations never change it. Only its own switch turns it on and off.',
+          'This light stays out of every group, so whole-house controls, scenes, and automations leave it alone. Its own controls still change it.',
         ],
       ),
     ],
@@ -766,8 +766,8 @@ const lightView = (
           backButtonView(h),
           h.h2([h.Class(SCREEN_TITLE)], [light.name]),
           renameFormView(model, inputs, 'light-name', h),
-          ...(isFixedLight(light.name)
-            ? [fixedLightView(h)]
+          ...(isOutsideWholeHouse(light.name)
+            ? [outsideWholeHouseView(h)]
             : [
                 Array.isReadonlyArrayEmpty(places)
                   ? h.empty
@@ -860,7 +860,7 @@ const groupView = (
                   Array.filter(
                     context.lights,
                     light =>
-                      !isFixedLight(light.name) ||
+                      !isOutsideWholeHouse(light.name) ||
                       Array.contains(group.memberAddresses, light.address),
                   ),
                   address => Array.contains(group.memberAddresses, address),

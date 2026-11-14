@@ -107,7 +107,9 @@ describe('Manage tab', () => {
           screen: Manage.Screen.Light({ address: 'c' }),
         },
       }),
-      expect(role('heading', { name: 'Always bright white' })).toExist(),
+      expect(
+        role('heading', { name: 'Not part of the whole house' }),
+      ).toExist(),
       expect(role('heading', { name: 'Move to' })).not.toExist(),
     )
   })

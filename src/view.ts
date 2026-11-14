@@ -58,7 +58,6 @@ import {
   canControl,
   draftSetting,
   isEditorBusy,
-  isFixedTarget,
   isMixed,
   isStrugglingToConnect,
   presetEditorProblem,
@@ -172,9 +171,6 @@ const targetLevelLabel = (
 ): string => {
   if (!status.hasReported) {
     return 'Not reporting'
-  }
-  if (isFixedTarget(target)) {
-    return status.isOn ? 'Bright white' : 'Off'
   }
   return status.isOn
     ? `${formatPercent(shownBrightness(model, target, status))} brightness`
@@ -1205,28 +1201,6 @@ const bulbChipsView = (
         }),
       )
 
-const FIXED_LIGHT_NOTE =
-  'Always bright white. Groups, scenes, and automations leave it alone.'
-
-const targetControlsView = (
-  model: Model,
-  target: Target,
-  name: string,
-  status: TargetStatus,
-  h: HtmlBuilder<Message>,
-): Html =>
-  isFixedTarget(target)
-    ? h.p([h.Class(CAPTION)], [FIXED_LIGHT_NOTE])
-    : targetSlidersView(model, target, name, status, h)
-
-const targetPresetsView = (
-  model: Model,
-  target: Target,
-  status: TargetStatus,
-  h: HtmlBuilder<Message>,
-): Html =>
-  isFixedTarget(target) ? h.empty : presetChipsView(model, target, status, h)
-
 const roomDetail = (
   model: Model,
   target: Target,
@@ -1267,10 +1241,10 @@ const roomSheetView = (
                 h,
                 Option.none(),
               ),
-              targetControlsView(model, target, room.label, status, h),
+              targetSlidersView(model, target, room.label, status, h),
             ],
           ),
-          targetPresetsView(model, target, status, h),
+          presetChipsView(model, target, status, h),
           Option.isSome(model.maybeHouseFailure)
             ? bulbChipsView(model, lights, h)
             : h.empty,
@@ -1326,10 +1300,10 @@ const bulbSheetView = (
               ),
             ),
           ),
-          targetControlsView(model, target, light.name, status, h),
+          targetSlidersView(model, target, light.name, status, h),
         ],
       ),
-      targetPresetsView(model, target, status, h),
+      presetChipsView(model, target, status, h),
     ],
     h,
   )

@@ -1530,6 +1530,119 @@ describe('the closet', () => {
     )
   })
 
+  describe('in the house', () => {
+    const bulb = (name: string, address: string) => ({
+      name,
+      address,
+      maybeColorTempRange: Option.some({ min: 153, max: 500 }),
+      supportsColor: true,
+    })
+    const bedroom = Target.Group({ name: 'Bedroom' })
+    const livingRoom = Target.Group({ name: 'Living Room' })
+    const house: Model = {
+      ...base,
+      lights: [
+        bulb('Living Room Orb', 'l'),
+        bulb('Bedroom UFO', 'u'),
+        bulb('Bedroom Sphere', 's'),
+        bulb('Closet', 'c'),
+      ],
+      groups: [
+        { name: 'All Lights', memberAddresses: ['l', 'u', 's'] },
+        { name: 'Bedroom', memberAddresses: ['u', 's'] },
+        { name: 'Living Room', memberAddresses: ['l'] },
+      ],
+      states: {
+        'Living Room Orb': state('OFF'),
+        'Bedroom UFO': state('OFF'),
+        'Bedroom Sphere': state('OFF'),
+        Closet: state('OFF'),
+      },
+    }
+
+    test('turns on and off with the Bedroom', () => {
+      story(
+        update,
+        given(house),
+        message(Message.ClickedPower({ target: bedroom })),
+        Command.expectHas(
+          SendFrameTwice({ frame: frameOf('Bedroom/set', { state: 'ON' }) }),
+          SendFrameTwice({ frame: frameOf('Closet/set', { state: 'ON' }) }),
+        ),
+        Command.resolveAll(
+          [SendFrameTwice, Message.SucceededSendFrame()],
+          [SendFrameTwice, Message.SucceededSendFrame()],
+        ),
+        settleTimedOut(1),
+        settleTimedOut(2),
+      )
+    })
+
+    test('turns on and off with the whole house', () => {
+      story(
+        update,
+        given(house),
+        message(Message.ClickedPower({ target: allLights })),
+        Command.expectHas(
+          SendFrameTwice({
+            frame: frameOf('All Lights/set', { state: 'ON' }),
+          }),
+          SendFrameTwice({ frame: frameOf('Closet/set', { state: 'ON' }) }),
+        ),
+        Command.resolveAll(
+          [SendFrameTwice, Message.SucceededSendFrame()],
+          [SendFrameTwice, Message.SucceededSendFrame()],
+        ),
+        settleTimedOut(1),
+        settleTimedOut(2),
+      )
+    })
+
+    test('stays as it is when another room turns on', () => {
+      story(
+        update,
+        given(house),
+        message(Message.ClickedPower({ target: livingRoom })),
+        Command.expectExact(
+          SendFrameTwice({
+            frame: frameOf('Living Room/set', { state: 'ON' }),
+          }),
+          WaitForConfirmation({ requestId: 1, delayMs: 5000 }),
+        ),
+        Command.resolve(SendFrameTwice, Message.SucceededSendFrame()),
+        settleTimedOut(1),
+        settleTimedOut(2),
+      )
+    })
+
+    test('keeps its color when the Bedroom changes color', () => {
+      story(
+        update,
+        given(house),
+        message(
+          Message.UpdatedSetting({
+            target: bedroom,
+            setting: Setting.Color({ hue: 120 }),
+          }),
+        ),
+        Command.expectExact(
+          SendFrame({
+            frame: frameOf('Bedroom/set', {
+              color: { hue: 120, saturation: 100 },
+            }),
+          }),
+          WaitForThrottle({ target: bedroom, kind: 'Color' }),
+        ),
+        Command.resolve(SendFrame, Message.SucceededSendFrame()),
+        Command.resolve(
+          WaitForThrottle,
+          Message.CompletedThrottleWait({ target: bedroom, kind: 'Color' }),
+        ),
+        settleTimedOut(1),
+      )
+    })
+  })
+
   test('the whole house is the group holding every other bulb', () => {
     expect(wholeHouseTarget(withCloset)).toEqual(
       Option.some(Target.Group({ name: 'All Lights' })),

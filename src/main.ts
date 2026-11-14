@@ -407,6 +407,46 @@ export const wholeHouseTarget = (model: Model): Option.Option<Target> => {
       )
 }
 
+// NOTE: A bulb outside the whole house, such as the closet, still turns on
+// and off with any group that holds every bulb of the room around it, such as
+// the Bedroom or the whole house. Only power reaches it this way. Color,
+// brightness, and scenes from a group never do.
+const powerFollowerNames = (
+  model: Model,
+  target: Target,
+): ReadonlyArray<string> => {
+  if (target._tag === 'Light') {
+    return []
+  }
+  const targetAddresses = Array.map(
+    lightsOfTarget(model, target),
+    light => light.address,
+  )
+  const holdsRoom = (roomId: RoomId): boolean =>
+    Option.exists(roomById(roomId), room =>
+      Array.match(roomLights(model, room), {
+        onEmpty: () => false,
+        onNonEmpty: lights =>
+          Array.every(lights, light =>
+            Array.contains(targetAddresses, light.address),
+          ),
+      }),
+    )
+  return pipe(
+    placedBulbs(model.lights, model.groups, model.states),
+    Array.filter(
+      bulb =>
+        isOutsideWholeHouse(bulb.name) &&
+        !Array.contains(commandNames(target), bulb.name) &&
+        Option.exists(
+          Option.flatMap(roomById(bulb.roomId), room => room.withinRoomId),
+          holdsRoom,
+        ),
+    ),
+    Array.map(bulb => bulb.name),
+  )
+}
+
 const previewedState = (state: LightState, setting: Setting): LightState =>
   Setting.match(setting, {
     Brightness: ({ value }) => modifyFields(state, { brightness: () => value }),
@@ -1271,8 +1311,9 @@ export const update = (model: Model, message: Message) =>
         target,
         Activity.SettingPower({ power }),
         POWER_CONFIRM_TIMEOUT_MS,
-        Array.map(commandNames(target), name =>
-          SendFrameTwice({ frame: powerFrame(name, power) }),
+        Array.map(
+          [...commandNames(target), ...powerFollowerNames(model, target)],
+          name => SendFrameTwice({ frame: powerFrame(name, power) }),
         ),
       )
     },

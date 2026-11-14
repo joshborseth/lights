@@ -504,7 +504,7 @@ const outsideWholeHouseView = (h: HtmlBuilder<Message>): Html =>
       h.p(
         [h.Class(CAPTION)],
         [
-          'This light stays out of every group, so whole-house controls, scenes, and automations leave it alone. Its own controls still change it.',
+          'This light stays out of every group, so groups, scenes, and automations never change its color or brightness. It still turns on and off with the room around it and with the whole house, and its own controls change everything.',
         ],
       ),
     ],
